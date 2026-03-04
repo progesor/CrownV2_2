@@ -1,0 +1,66 @@
+# =========================
+# Build folders
+# =========================
+Debug/
+Release/
+build/
+
+# =========================
+# Compiled objects
+# =========================
+*.o
+*.d
+*.elf
+*.bin
+*.hex
+*.map
+*.list
+*.axf
+*.su
+
+# =========================
+# STM32CubeIDE generated files
+# =========================
+*.launch
+
+# =========================
+# Eclipse / STM32CubeIDE metadata
+# =========================
+.settings/
+.metadata/
+.recommenders/
+
+# workspace local preferences
+*.prefs
+
+# =========================
+# Temporary files
+# =========================
+*.log
+*.tmp
+*.bak
+*.swp
+
+# =========================
+# OS files
+# =========================
+.DS_Store
+Thumbs.db
+
+# =========================
+# VSCode (if used)
+# =========================
+.vscode/
+
+# =========================
+# CMake (if used)
+# =========================
+CMakeFiles/
+CMakeCache.txt
+cmake-build*/
+
+# =========================
+# Python (if scripts exist)
+# =========================
+__pycache__/
+*.pyc

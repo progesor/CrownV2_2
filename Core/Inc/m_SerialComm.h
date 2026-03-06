@@ -1,29 +1,30 @@
 /*
  * m_SerialComm.h
- *
- *  Created on: Jan 27, 2026
- *      Author: Baris
  */
 
 #ifndef INC_M_SERIALCOMM_H_
 #define INC_M_SERIALCOMM_H_
 
 #include <stdint.h>
+#include "main.h"
 #include "AppConfig.h"
 
+extern UART_HandleTypeDef huart3;
 
+#define RX_BUFFER_SIZE 256u
+#define TX_BUFFER_SIZE 256u
 
-void ReceiveSerialData_Task(uint8_t rx_byte);
-void ParseSerialData(uint8_t *line);
-uint8_t String2Uint8(uint8_t *buffer);
-uint16_t String2Uint16(uint8_t *buffer);
-uint32_t String2Uint32(uint8_t *buffer);
-float String2Float(uint8_t *buffer);
-
-extern uint8_t serial_comm_ready;
-extern uint8_t rx_data_ready;
-extern uint8_t tx_data_ready;
-extern uint8_t rx_buffer[RX_BUFFER_SIZE];
 extern uint8_t tx_buffer[TX_BUFFER_SIZE];
+extern uint8_t rx_byte;
+extern volatile uint8_t rx_data_ready;
+extern volatile uint8_t rx_needs_restart; // YENİ: Kurtarıcı Bayrak
+
+extern void SendSerialData(uint8_t *buffer);
+
+void Init_SerialComm(void);
+void HAL_UART_RxCpltCallback(UART_HandleTypeDef *huart);
+void HAL_UART_ErrorCallback(UART_HandleTypeDef *huart);
+void Process_Binary_Packet(void);
+uint16_t Calculate_CRC16(uint8_t *buffer, uint16_t length);
 
 #endif /* INC_M_SERIALCOMM_H_ */

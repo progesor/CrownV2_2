@@ -66,6 +66,7 @@ typedef struct
 	// ReceiveSerialData_Task()
 
 	// InterpretSerialData()
+	uint32_t last_valid_comm_time;  //
 	uint8_t serial_comm_active;		// Seri haberleşmenin aktif olduğunu gösteren değişken
 	uint8_t operation_active;		// Saç ekim operasyonunun Aktif/Pasif olduğunu gösteren değişken
 	uint8_t operation_start;		// Saç ekim operasyonunu başlatan değişken (Başlat)

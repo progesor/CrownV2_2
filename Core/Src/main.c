@@ -92,6 +92,7 @@
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
 #include <stdio.h>
+#include <string.h>
 #include "m_SharedMemory.h"
 #include "m_IO.h"
 #include "m_MotorControl.h"
@@ -131,6 +132,7 @@ TIM_HandleTypeDef htim2;
 TIM_HandleTypeDef htim4;
 
 UART_HandleTypeDef huart3;
+DMA_HandleTypeDef hdma_usart3_rx;
 
 /* USER CODE BEGIN PV */
 
@@ -149,7 +151,7 @@ static void MX_USART3_UART_Init(void);
 
 void SendSerialData(uint8_t *buffer);
 
-uint8_t rx_byte = 0u;		// Seri haberleşmeden gelen byte
+//uint8_t rx_byte = 0u;		// Seri haberleşmeden gelen byte
 uint32_t rx_irq_count = 0u;
 ProgramState_t operation_state;
 
@@ -158,64 +160,27 @@ ProgramState_t operation_state;
 
 /* Private user code ---------------------------------------------------------*/
 /* USER CODE BEGIN 0 */
-void HAL_UART_RxCpltCallback(UART_HandleTypeDef *huart)
-{
-    if (huart->Instance == USART3)
-    {
-    	ReceiveSerialData_Task(rx_byte);
-    	HAL_UART_Receive_IT(&huart3, &rx_byte, 1u);
-    	rx_irq_count++;
-    }
-}
 
-// *** YENİ EKLENECEK FONKSİYON: UART HATA KURTARICI ***
-void HAL_UART_ErrorCallback(UART_HandleTypeDef *huart)
-{
-    if (huart->Instance == USART3)
-    {
-        // 1. Donanımsal hata bayraklarını (Overrun, Noise, Frame) ZORLA temizle
-        __HAL_UART_CLEAR_OREFLAG(huart);
-        __HAL_UART_CLEAR_NEFLAG(huart);
-        __HAL_UART_CLEAR_FEFLAG(huart);
 
-        // 2. Tıkanmış olan dinleme işlemini iptal et ve taze bir başlangıç yap
-        HAL_UART_AbortReceive_IT(huart);
-        HAL_UART_Receive_IT(&huart3, &rx_byte, 1u);
-    }
-}
-
-void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef *htim)		//  CONTROL LOOP Callback
+void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef *htim)
 {
     if (htim == &htim2)
     {
-        // Kontrol döngüsü buraya gelecek
-        // Encoder oku, Observer çalıştır, Main_Control_Loop çağır...
-
-    	HAL_GPIO_WritePin(DO_Led_GPIO_Port, DO_Led_Pin, 1u);
-
-    	//HAL_GPIO_TogglePin(DO_Led_GPIO_Port, DO_Led_Pin);
-    	// 1) ADC değerlerini oku ve filtrele
-    	UpdateADC_FromDMA_Task();
-
-    	// 2) Enkoderden Konum ve Hız değerlerini oku
-    	UpdateEncoder_Task();
-
-    	// 3) Motor kontrolünü yap.
-    	MotorControl_Task();
-
-    	HAL_GPIO_WritePin(DO_Led_GPIO_Port, DO_Led_Pin, 0u);
+        HAL_GPIO_WritePin(DO_Led_GPIO_Port, DO_Led_Pin, 1u);
+        UpdateADC_FromDMA_Task();
+        UpdateEncoder_Task();
+        MotorControl_Task();
+        HAL_GPIO_WritePin(DO_Led_GPIO_Port, DO_Led_Pin, 0u);
     }
 }
 
+// GÜVENLİ VE KİLİTLENMEYEN GÖNDERİM FONKSİYONU
 void SendSerialData(uint8_t *buffer)
 {
-	if (buffer == NULL) return;		// Buffer boşsa...
-
-	// *** KRİTİK DÜZELTME: Kendi üzerine yazan snprintf kaldırıldı! ***
-	// Artık sadece oluşturulan metni doğrudan yolluyoruz.
-	// Kilitlenmeyi önlemek için Timeout değerini 5 milisaniyeye indirdik.
-	uint16_t len = strlen((char*)buffer);
-	HAL_UART_Transmit(&huart3, buffer, len, 5u);
+    if (buffer == NULL) return;
+    uint16_t len = strlen((char*)buffer);
+    // 10ms timeout sayesinde cihaz donanımsal arıza olsa bile ASLA çökmez/kilitlenmez!
+    HAL_UART_Transmit(&huart3, buffer, len, 10);
 }
 
 /* USER CODE END 0 */
@@ -272,7 +237,11 @@ int main(void)
   // TIM4: Enkoder sayacı timer'ını başlat
   Init_Tim4();
 
-  HAL_UART_Receive_IT(&huart3, &rx_byte, 1);	// USART3'ün aktif olması için gerekli.
+  // *** UART'I TIM2'DEN DAHA ÖNCELİKLİ HALE GETİR (Overrun Çözümü) ***
+    HAL_NVIC_SetPriority(USART3_IRQn, 0, 0); // En yüksek öncelik
+    HAL_NVIC_SetPriority(TIM2_IRQn, 2, 0);   // Daha düşük öncelik
+
+  Init_SerialComm();
 
   SharedMemoryInit();
 
@@ -286,6 +255,9 @@ int main(void)
   operation_state = OP_STATE_IDLE;
   uint32_t time_counter = 0u;
 
+  char boot_msg[] = "\n[STM32] SISTEM BASARIYLA BASLATILDI!\n";
+    HAL_UART_Transmit(&huart3, (uint8_t*)boot_msg, strlen(boot_msg), 100);
+
 
   /* USER CODE END 2 */
 
@@ -296,14 +268,40 @@ int main(void)
     /* USER CODE END WHILE */
 
     /* USER CODE BEGIN 3 */
+	  	  uint32_t now_ms = HAL_GetTick();
 
-	  uint32_t now_ms = HAL_GetTick();
-
-	  if(rx_data_ready)
+	        // *** YENİ: KİLİTLENEN UART'I KURTARICI ***
+	        // Eğer kesme içinde başlatılamayan bir dinleme varsa, ana döngüde yeniden dene!
+	        if (rx_needs_restart)
 	        {
-	            ParseSerialData(rx_buffer);
-	            rx_data_ready = 0u;
+	            if (HAL_UART_Receive_IT(&huart3, &rx_byte, 1) == HAL_OK) {
+	                rx_needs_restart = 0u; // Başarıyla kurtarıldı!
+	            }
 	        }
+
+	  	  if(rx_data_ready)
+	  	  {
+	  	      Process_Binary_Packet();
+	  	      rx_data_ready = 0u;
+	  	  }
+
+	  	// *** MEDİKAL GÜVENLİK KİLİDİ (WATCHDOG) ***
+	  	   // Eğer motor boşta değilse VE son geçerli komuttan bu yana 1000ms (1 saniye) geçtiyse
+	  	      if (sm.act_motor_state != MOT_STATE_IDLE)
+	  	      {
+	  	          // DÜZELTME: now_ms yerine doğrudan o anki HAL_GetTick() değerini kullanıyoruz (Underflow Önlemi)
+	  	          if ((HAL_GetTick() - sm.last_valid_comm_time) > 1000u)
+	  	          {
+	  	              // İletişim koptu! Motoru derhal durdur.
+	  	              sm.act_motor_state = MOT_STATE_IDLE;
+	  	              sm.ref_velocity = 0.0f;
+	  	              sm.current_traj_rpm = 0.0f;
+	  	              InitControlVel();
+	  	              DriveMotor(0.0f, 1u, 1u);
+
+	  	              SendSerialData((uint8_t*)"<DBG: WATCHDOG_EMERGENCY_STOP>\n");
+	  	          }
+	  	      }
 
 	  if ((now_ms - serial_comm_loop_ms) >= 50u)
 	        {
@@ -668,7 +666,7 @@ static void MX_TIM2_Init(void)
   htim2.Instance = TIM2;
   htim2.Init.Prescaler = 71;
   htim2.Init.CounterMode = TIM_COUNTERMODE_UP;
-  htim2.Init.Period = 999;
+  htim2.Init.Period = 4999;
   htim2.Init.ClockDivision = TIM_CLOCKDIVISION_DIV1;
   htim2.Init.AutoReloadPreload = TIM_AUTORELOAD_PRELOAD_ENABLE;
   if (HAL_TIM_Base_Init(&htim2) != HAL_OK)
@@ -787,6 +785,9 @@ static void MX_DMA_Init(void)
   /* DMA1_Channel1_IRQn interrupt configuration */
   HAL_NVIC_SetPriority(DMA1_Channel1_IRQn, 10, 0);
   HAL_NVIC_EnableIRQ(DMA1_Channel1_IRQn);
+  /* DMA1_Channel3_IRQn interrupt configuration */
+  HAL_NVIC_SetPriority(DMA1_Channel3_IRQn, 0, 0);
+  HAL_NVIC_EnableIRQ(DMA1_Channel3_IRQn);
 
 }
 

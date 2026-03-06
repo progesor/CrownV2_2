@@ -192,7 +192,7 @@ void InitControlVel(void)
 {
 	k_anti_windup = 1.0f * (sm.ki_velocity / sm.kp_velocity);	// VelocityControl() içindeki Anti-Windup katsayısını günceller.
 	ui_vel = 0.0f;				// VelocityControl() içindeki integral kontrolcü çıkışını resetler.
-	uo_vel_sat0 = 0.0f;			// VelocityControl() içindeki kontrol sinyali çıkışında yer alan LPF eski çıkış değerini resetler.
+	uo_vel_sat0 = 0.0f;			// VelocityControl() içindeki kontrol sinyali çıkışında yer alan LPF eski çıkış değerini resetler."
 	ramped_ref_rpm = 0.0f;		// TrajectoryGeneratorVel() içindeki rampa referans değerini sıfırlar.
 }
 
@@ -303,16 +303,23 @@ float TrajectoryGeneratorVel(float target_rpm, float accel_limit_rpm_s)
 
 uint8_t StallSupervisor(float current, float pwm_duty, float ref_pos, float act_pos)
 {
+	// Eğer motor sadece hız kontrol modundaysa (Continuous), Stall denetimini atla!
+		if (sm.act_motor_state == MOT_STATE_VEL_CONTROL || sm.act_motor_state == MOT_STATE_VEL_CONTROL_INIT) {
+			stall_detected = 0u;
+			act_stall_state = STALL_IDLE;
+			return 0;
+		}
+
 	//float pos_error = fabsf(ref_pos - act_pos);
 	float pos_error_limit = ref_pos * 0.1f;
 
 	// 1. Algılama Mantığı:
 	// Akım çok yüksekse VEYA (PWM doyumda VE Hız hatası büyükse)
 	//if( (current > STALL_CURRENT_LIMIT) || (pwm_duty > STALL_PWM_LIMIT) || (pos_error < -STALL_POS_ERROR_LIMIT) )
-	if( (act_pos > ref_pos + pos_error_limit) || (act_pos < 0 - pos_error_limit) )
-	{
-		stall_detected = 1u;
-	}
+	if( (act_pos > ref_pos + pos_error_limit) || (act_pos < 0.0f - pos_error_limit) )
+		{
+			stall_detected = 1u;
+		}
 
 	switch(act_stall_state)
 	{

@@ -1,221 +1,127 @@
-/*
- * m_SerialComm.c
- *
- *  Created on: Jan 27, 2026
- *      Author: Baris
- */
-
 #include "m_SerialComm.h"
 #include "m_SharedMemory.h"
 #include "m_MotorControl.h"
 #include "m_IO.h"
-
-#include <stdlib.h>
 #include <string.h>
 #include <stdio.h>
 
-// *** Değişkenler m_SerialComm.c
-uint8_t serial_comm_ready = 0u;
-uint8_t rx_data_ready = 0u;
-uint8_t tx_data_ready = 0u;
-uint8_t rx_buffer[RX_BUFFER_SIZE] = {0};
-static uint8_t rx_buffer_temp[RX_BUFFER_SIZE] = {0};
 uint8_t tx_buffer[TX_BUFFER_SIZE] = {0};
-static volatile uint16_t rx_buffer_temp_index = 0;
-static volatile uint16_t rx_data_length = 0;
 
+uint8_t rx_byte = 0;
+static uint8_t rx_buf[RX_BUFFER_SIZE] = {0};
+static uint8_t process_buffer[RX_BUFFER_SIZE] = {0};
 
-void ReceiveSerialData_Task(uint8_t rx_byte)
-{
-    static uint8_t receiving = 0;
+static uint16_t rx_idx = 0;
+static uint8_t rx_state = 0;
+static uint16_t expected_len = 0;
 
-    // Paket başlangıcı
-    if (rx_byte == '<')
-    {
-        receiving = 1;
-        rx_buffer_temp_index = 0;
-        rx_buffer_temp[rx_buffer_temp_index++] = rx_byte;
+volatile uint8_t rx_data_ready = 0u;
+volatile uint16_t rx_data_length = 0u;
+volatile uint8_t rx_needs_restart = 0u;
+
+uint16_t Calculate_CRC16(uint8_t *buffer, uint16_t length) {
+    uint16_t crc = 0xFFFF;
+    for (uint16_t pos = 0; pos < length; pos++) {
+        crc ^= (uint16_t)buffer[pos];
+        for (int i = 8; i != 0; i--) {
+            if ((crc & 0x0001) != 0) { crc >>= 1; crc ^= 0xA001; }
+            else { crc >>= 1; }
+        }
     }
-    else if (receiving)
-    {
-        // Buffer taşmasını önle
-        if (rx_buffer_temp_index < (RX_BUFFER_SIZE - 1))
-        {
-            rx_buffer_temp[rx_buffer_temp_index++] = rx_byte;
+    return crc;
+}
 
-            // Paket başarıyla tamamlandı
-            if (rx_byte == '>')
-            {
-                receiving = 0;
+void Init_SerialComm(void) {
+    rx_state = 0;
+    rx_needs_restart = 0;
+    HAL_UART_Receive_IT(&huart3, &rx_byte, 1);
+}
 
-                // Eğer ana döngü müsaitse veriyi aktar
-                if (rx_data_ready == 0)
-                {
-                    rx_buffer_temp[rx_buffer_temp_index] = '\0';
-                    strcpy((char*)rx_buffer, (char*)rx_buffer_temp);
+void HAL_UART_RxCpltCallback(UART_HandleTypeDef *huart) {
+    if (huart->Instance == USART3) {
+        switch (rx_state) {
+            case 0:
+                if (rx_byte == 0xAA) { rx_buf[0] = 0xAA; rx_idx = 1; rx_state = 1; }
+                break;
+            case 1:
+                if (rx_byte == 0x55) { rx_buf[1] = 0x55; rx_idx = 2; rx_state = 2; }
+                else { rx_state = 0; }
+                break;
+            case 2:
+                rx_buf[2] = rx_byte;
+                expected_len = rx_byte + 6;
+                if (expected_len > RX_BUFFER_SIZE) { rx_state = 0; }
+                else { rx_idx = 3; rx_state = 3; }
+                break;
+            case 3:
+                rx_buf[rx_idx++] = rx_byte;
+                if (rx_idx >= expected_len) {
+                    memcpy(process_buffer, rx_buf, expected_len);
+                    rx_data_length = expected_len;
                     rx_data_ready = 1u;
+                    rx_state = 0;
                 }
-            }
+                break;
         }
-        else
-        {
-            // Buffer doldu ama hala '>' gelmedi. Bu hatalı/gürültülü bir pakettir, iptal et!
-            receiving = 0;
-            rx_buffer_temp_index = 0;
+        // Eğer TX o an veri gönderdiği için kilitliyse (HAL_BUSY dönerse),
+        // sağır kalmamak için kurtarıcı bayrağı kaldır!
+        if (HAL_UART_Receive_IT(&huart3, &rx_byte, 1) != HAL_OK) {
+            rx_needs_restart = 1u;
         }
     }
 }
 
-void ParseSerialData(uint8_t *line)
-{
-    if (line == NULL) return;
+void HAL_UART_ErrorCallback(UART_HandleTypeDef *huart) {
+    if (huart->Instance == USART3) {
+        __HAL_UART_CLEAR_OREFLAG(huart);
+        __HAL_UART_CLEAR_NEFLAG(huart);
+        __HAL_UART_CLEAR_FEFLAG(huart);
+        __HAL_UART_CLEAR_PEFLAG(huart);
+        HAL_UART_AbortReceive_IT(huart);
+        rx_state = 0;
 
-    char *start = strchr((char*)line, '<');
-    char *end = strchr((char*)line, '>');
+        if (HAL_UART_Receive_IT(&huart3, &rx_byte, 1) != HAL_OK) {
+            rx_needs_restart = 1u;
+        }
+    }
+}
 
-    if (start != NULL && end != NULL && end > start)
-    {
-        *end = '\0';
-        char *payload = start + 1;
+void Process_Binary_Packet(void) {
+    if (rx_data_length < 6) return;
 
-        char *cmd = strtok(payload, ",");
-        char *p1_str = strtok(NULL, ",");
-        char *p2_str = strtok(NULL, ",");
-        char *p3_str = strtok(NULL, ","); // YENİ: 3. Parametre (İvme vb. için)
+    uint8_t payload_length = process_buffer[2];
+    uint16_t expected_total_len = 6 + payload_length;
 
-        if (cmd != NULL && p1_str != NULL && p2_str != NULL)
-        {
-            float param1 = atof(p1_str);
-            float param2 = atof(p2_str);
+    uint16_t calc_crc = Calculate_CRC16(&process_buffer[2], 2 + payload_length);
+    uint16_t rx_crc = process_buffer[expected_total_len - 2] | (process_buffer[expected_total_len - 1] << 8);
 
-            if (strcmp(cmd, "SET_RPM") == 0)
-            {
+    if (calc_crc != rx_crc) return;
+
+    sm.last_valid_comm_time = HAL_GetTick(); // WATCHDOG GÜNCELLEMESİ
+
+    uint8_t cmd = process_buffer[3];
+    uint8_t *payload = &process_buffer[4];
+
+    switch (cmd) {
+        case 0x10:
+            if (payload_length == 4) {
+                float target_rpm;
+                memcpy(&target_rpm, payload, 4);
                 if (sm.act_motor_state != MOT_STATE_VEL_CONTROL) InitControlVel();
-                sm.ref_velocity = param1;
+                sm.ref_velocity = target_rpm;
                 sm.act_motor_state = MOT_STATE_VEL_CONTROL;
+
+                SendSerialData((uint8_t*)"<DBG: CMD_RPM_OK>\n");
             }
-            else if (strcmp(cmd, "OSC") == 0)
-            {
-                float param3 = (p3_str != NULL) ? atof(p3_str) : 20000.0f; // 3. parametre İVME
+            break;
+        case 0x20:
+            sm.act_motor_state = MOT_STATE_IDLE;
+            sm.ref_velocity = 0.0f;
+            sm.current_traj_rpm = 0.0f;
+            InitControlVel();
+            DriveMotor(0.0f, 1u, 1u);
 
-                sm.osc_target_deg = param1;
-                sm.osc_max_rpm = param2;
-                sm.osc_accel_rpm_s = param3; // İvmeyi canlı alıyoruz
-
-                // *** KRİTİK DÜZELTME: CANLI GÜNCELLEME KORUMASI ***
-                // Eğer motor zaten osilasyondaysa SADECE hedefleri değiştir, motoru resetleme!
-                if (sm.act_motor_state != MOT_STATE_POS_CONTROL)
-                {
-                    sm.current_traj_rpm = 0.0f;
-                    sm.osc_state = 0;
-                    InitControlPos();
-                    InitControlVel();
-                    sm.act_motor_state = MOT_STATE_POS_CONTROL;
-                }
-            }
-            else if (strcmp(cmd, "STOP") == 0)
-            {
-                sm.act_motor_state = MOT_STATE_IDLE;
-                sm.ref_velocity = 0.0f;
-                sm.current_traj_rpm = 0.0f;
-                InitControlVel();
-                DriveMotor(0.0f, 1u, 1u);
-
-                // *** KRİTİK DÜZELTME: POZİSYON ŞİŞMESİNİ (FLOAT OVERFLOW) ÖNLEME ***
-                sm.encoder_position_count = 0; // Donanımsal sayacı sıfırla
-                sm.act_position = 0.0f;        // Mutlak açıyı sıfırla
-                sm.act_position_relative = 0.0f;
-            }
-
-            else if (strcmp(cmd, "PID") == 0)
-                        {
-                            sm.kp_velocity = param1;
-                            sm.ki_velocity = param2;
-                        }
-        }
+            SendSerialData((uint8_t*)"<DBG: CMD_STOP_OK>\n");
+            break;
     }
-}
-
-
-
-
-uint8_t String2Uint8(uint8_t *buffer)
-{
-    char *endptr;
-
-    // Buffer boşsa...
-    if (buffer == NULL) return 0;
-
-    unsigned long val = strtoul((char*)buffer, &endptr, 10);
-
-    // Buffer içinde hiç sayı yoksa...
-    if (endptr == (char*)buffer) return 0;
-
-    // Sayı dışında karakter varsa (örn "12a" veya "123 ")...
-    if (*endptr != '\0') return 0;
-
-    // uint8_t sınırı aşmışsa...
-    if (val > 255) val = 255;
-
-    return (uint8_t)val;
-}
-
-uint16_t String2Uint16(uint8_t *buffer)
-{
-    char *endptr;
-
-    // Buffer boşsa...
-    if (buffer == NULL) return 0;
-
-    unsigned long val = strtoul((char*)buffer, &endptr, 10);
-
-    // Buffer içinde hiç sayı yoksa...
-    if (endptr == (char*)buffer) return 0;
-
-    // Sayı dışında karakter varsa (örn "12a" veya "123 ")...
-    if (*endptr != '\0') return 0;
-
-    // uint8_t sınırı aşmışsa...
-    if (val > 65535) val = 65535;
-
-    return (uint16_t)val;
-}
-
-uint32_t String2Uint32(uint8_t *buffer)
-{
-    char *endptr;
-
-    // Buffer boşsa...
-    if (buffer == NULL) return 0;
-
-    unsigned long val = strtoul((char*)buffer, &endptr, 10);
-
-    // Buffer içinde hiç sayı yoksa...
-    if (endptr == (char*)buffer) return 0;
-
-    // Sayı dışında karakter varsa (örn "12a" veya "123 ")...
-    if (*endptr != '\0') return 0;
-
-    // uint8_t sınırı aşmışsa...
-    if (val > 4294967295) val = 4294967295;
-
-    return (uint32_t)val;
-}
-
-float String2Float(uint8_t *buffer)
-{
-    char *endptr;
-
-    // Buffer boşsa...
-    if (buffer == NULL) return 0.0f;
-
-    float val = strtof((char*)buffer, &endptr);
-
-    // Buffer içinde hiç sayı yoksa...
-    if (endptr == (char*)buffer) return 0.0f;
-
-    // Sayı dışında karakter varsa (örn "12a" veya "123 ")...
-    if (*endptr != '\0') return 0.0f;
-
-    return val;
 }

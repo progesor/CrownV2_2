@@ -91,6 +91,7 @@ class ErtipCrownApp(ctk.CTk):
         self.tabview.add("Reçete (Sequence)")
 
         self.setup_manual_tab()
+        self.setup_pid_tab()
         self.setup_recipe_tab()
 
     def setup_manual_tab(self):
@@ -113,6 +114,40 @@ class ErtipCrownApp(ctk.CTk):
     def setup_recipe_tab(self):
         tab = self.tabview.tab("Reçete (Sequence)")
         ctk.CTkLabel(tab, text="Çok Adımlı Reçete Sistemi (Yakında Eklenecek)", text_color="gray").pack(pady=50)
+        
+    def setup_pid_tab(self):
+        tab = self.tabview.tab("PID Kalibrasyon")
+        
+        # Kp (Oransal Kazanç) Slider'ı
+        ctk.CTkLabel(tab, text="Oransal Kazanç (Kp):", font=ctk.CTkFont(size=14)).pack(pady=(10, 0))
+        self.lbl_kp_val = ctk.CTkLabel(tab, text="1.00", font=ctk.CTkFont(size=14, weight="bold"))
+        self.lbl_kp_val.pack()
+        self.slider_kp = ctk.CTkSlider(tab, from_=0.0, to=20.0, command=self.update_pid_labels)
+        self.slider_kp.set(1.0) # Varsayılan Kp
+        self.slider_kp.pack(pady=5, padx=20, fill="x")
+
+        # Ki (İntegral Kazancı) Slider'ı
+        ctk.CTkLabel(tab, text="İntegral Kazancı (Ki):", font=ctk.CTkFont(size=14)).pack(pady=(10, 0))
+        self.lbl_ki_val = ctk.CTkLabel(tab, text="0.10", font=ctk.CTkFont(size=14, weight="bold"))
+        self.lbl_ki_val.pack()
+        self.slider_ki = ctk.CTkSlider(tab, from_=0.0, to=100.0, command=self.update_pid_labels)
+        self.slider_ki.set(0.1) # Varsayılan Ki
+        self.slider_ki.pack(pady=5, padx=20, fill="x")
+
+        self.btn_send_pid = ctk.CTkButton(tab, text="YENİ PID DEĞERLERİNİ GÖNDER", fg_color="#e67e22", hover_color="#d35400", height=40, command=self.send_pid)
+        self.btn_send_pid.pack(pady=20, padx=20, fill="x")
+
+    def update_pid_labels(self, _):
+        self.lbl_kp_val.configure(text=f"{self.slider_kp.get():.2f}")
+        self.lbl_ki_val.configure(text=f"{self.slider_ki.get():.2f}")
+
+    def send_pid(self):
+        if self.is_connected:
+            kp = float(self.slider_kp.get())
+            ki = float(self.slider_ki.get())
+            # '<ff' demek: 2 adet yan yana Float (4+4 = 8 byte) paketle
+            payload = struct.pack('<ff', kp, ki)
+            self.send_reliable(0x30, payload, retries=3)
 
     # --- DONANIM VE PROTOKOL FONKSİYONLARI ---
     def get_ports(self):

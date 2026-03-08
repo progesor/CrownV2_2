@@ -114,6 +114,22 @@ void Process_Binary_Packet(void) {
                 SendSerialData((uint8_t*)"<DBG: CMD_RPM_OK>\n");
             }
             break;
+        case 0x30: // SET PID (Kp ve Ki)
+                    if (payload_length == 8) { // 2 adet float = 8 byte
+                        float new_kp, new_ki;
+                        memcpy(&new_kp, payload, 4);
+                        memcpy(&new_ki, payload + 4, 4);
+
+                        // Katsayıları canlı olarak Shared Memory'e yaz
+                        sm.kp_velocity = new_kp;
+                        sm.ki_velocity = new_ki;
+
+                        // Parametreler değiştiği için Anti-Windup vb. resetlensin
+                        InitControlVel();
+
+                        SendSerialData((uint8_t*)"<DBG: CMD_PID_OK>\n");
+                    }
+                    break;
         case 0x20:
             sm.act_motor_state = MOT_STATE_IDLE;
             sm.ref_velocity = 0.0f;

@@ -162,6 +162,17 @@ ProgramState_t operation_state;
 /* USER CODE BEGIN 0 */
 
 
+/**
+ * @brief  Period elapsed callback in non-blocking mode.
+ *
+ * Called when the specified timer reaches its period and generates an interrupt.
+ * For TIM2, this executes the hard real-time control loop tasks, including
+ * reading ADC values, updating the encoder, and running the motor control task.
+ *
+ * @param  htim Pointer to a TIM_HandleTypeDef structure that contains
+ *              the configuration information for the specified TIM module.
+ * @retval None
+ */
 void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef *htim)
 {
     if (htim == &htim2)
@@ -174,7 +185,16 @@ void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef *htim)
     }
 }
 
-// GÜVENLİ VE KİLİTLENMEYEN GÖNDERİM FONKSİYONU
+/**
+ * @brief Safely sends a buffer of data over UART3 without blocking forever.
+ *
+ * Implements a non-blocking or timeout-limited method to transmit data over
+ * the serial connection. This ensures the main loop isn't stalled if the
+ * communication hardware fails.
+ *
+ * @param buffer Pointer to the null-terminated string/data to be sent.
+ * @retval None
+ */
 void SendSerialData(uint8_t *buffer)
 {
     if (buffer == NULL) return;
@@ -892,6 +912,10 @@ static void MX_GPIO_Init(void)
 
 /**
   * @brief  This function is executed in case of error occurrence.
+  *
+  * Disables interrupts and loops infinitely. Used as a hard fault or HAL
+  * error fallback.
+  *
   * @retval None
   */
 void Error_Handler(void)

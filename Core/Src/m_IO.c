@@ -20,6 +20,14 @@ static volatile uint16_t adc_dma_buf[ADC_CHANNEL_COUNT] = {0}; 	// DMA'nin doldu
 static volatile uint16_t tim4_cnt_last = 0;						// Enkoder okumada kullanılan sayaç değeri
 
 
+/**
+ * @brief Initializes the Analog-to-Digital Converter (ADC).
+ *
+ * Starts ADC calibration and initiates continuous DMA transfers to automatically
+ * store the readings of multiple ADC channels into the designated memory buffer.
+ *
+ * @return None
+ */
 void Init_ADC(void)
 {
 	// ADC işlemleri
@@ -27,23 +35,57 @@ void Init_ADC(void)
 	HAL_ADC_Start_DMA(&hadc1, (uint32_t*)adc_dma_buf, ADC_CHANNEL_COUNT);		// ADC + DMA sürekli tarama
 }
 
+/**
+ * @brief Initializes Timer 1 (TIM1) for motor PWM generation.
+ *
+ * Starts PWM generation on the specified channel and initially sets the
+ * compare value to zero to ensure the motor is stopped at startup.
+ *
+ * @return None
+ */
 void Init_Tim1(void)
 {
 	HAL_TIM_PWM_Start(&htim1, TIM_CHANNEL_1);			// Motor PWM çıkışı için...
 	 __HAL_TIM_SET_COMPARE(&htim1, TIM_CHANNEL_1, 0);  	// Başlangıçta motor durur vaziyette olması için...
 }
 
+/**
+ * @brief Initializes Timer 2 (TIM2) as the main control loop timebase.
+ *
+ * Starts the timer in interrupt mode so that it generates periodic hardware
+ * interrupts, driving the real-time execution of the control system.
+ *
+ * @return None
+ */
 void Init_Tim2(void)
 {
 	HAL_TIM_Base_Start_IT(&htim2); // Timer 2'yi kesme modunda başlat
 }
 
+/**
+ * @brief Initializes Timer 4 (TIM4) for quadrature encoder reading.
+ *
+ * Starts the timer in encoder mode on all channels and captures the
+ * initial counter value as a baseline for distance measurements.
+ *
+ * @return None
+ */
 void Init_Tim4(void)
 {
 	HAL_TIM_Encoder_Start(&htim4, TIM_CHANNEL_ALL);		// Encoder okumak için...
 	tim4_cnt_last = (uint16_t)__HAL_TIM_GET_COUNTER(&htim4);
 }
 
+/**
+ * @brief Processes raw ADC values captured by DMA.
+ *
+ * This function retrieves raw analog values for reference speed, motor voltage,
+ * and motor current from the DMA buffer. It applies median filtering to remove
+ * sudden spikes and low-pass filtering to smoothen the signals, then saves
+ * the processed values to the shared memory structure.
+ *
+ * @return None
+ */
 void UpdateADC_FromDMA_Task(void)
 {
 	// 1. Ham verileri DMA buffer'ından al
@@ -96,6 +138,16 @@ void UpdateADC_FromDMA_Task(void)
 	//	sm.ref_position = (float)ScaleValues(lpf_val_pot, 36000, 1000);
 }
 
+/**
+ * @brief Updates encoder position and velocity measurements.
+ *
+ * Reads the current pulse count from TIM4, calculates the position difference
+ * since the last update, updates the total position counter, and computes the
+ * instantaneous motor velocity (RPM) with alpha-beta and median filtering.
+ * Includes continuous mode overflow protection to prevent counter windup.
+ *
+ * @return None
+ */
 void UpdateEncoder_Task(void)
 {
 	// 1. Enkoder sayacını oku
@@ -143,12 +195,31 @@ void UpdateEncoder_Task(void)
 	sm.act_velocity_raw = rpm;
 }
 
+/**
+ * @brief Scans discrete digital input/output pins.
+ *
+ * Reads the state of hardware buttons and pedals (currently disabled inside body).
+ *
+ * @return None
+ */
 void ScanIO_Task(void)
 {
 	//sm.pedal_state = HAL_GPIO_ReadPin(DI_Pedal_GPIO_Port, DI_Pedal_Pin);
 }
 
 
+/**
+ * @brief Drives the motor with a specified duty cycle and direction.
+ *
+ * Converts a normalized PWM duty cycle to the appropriate timer compare value,
+ * updates hardware control pins for motor direction and braking, and sets
+ * the hardware timer to generate the PWM signal.
+ *
+ * @param pwm_duty The normalized target PWM duty cycle (0.0f to 1.0f).
+ * @param direction The direction of rotation (1: Clockwise, 0: Counter-Clockwise).
+ * @param brake_status The brake status (1: Brake OFF/Active Drive, 0: Brake ON).
+ * @return None
+ */
 void DriveMotor(float pwm_duty, uint8_t direction, uint8_t brake_status)
 {
 	if(pwm_duty > 1.0f) pwm_duty = 1.0f;

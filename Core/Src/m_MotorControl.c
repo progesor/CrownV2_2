@@ -202,28 +202,48 @@ void RunOscillationTrajectory(void)
     VelocityControl(sm.current_traj_rpm, sm.act_velocity, 0.0f);
 }
 
+// *** ZIRHLANDIRILMIŞ (BULLETPROOF) ZAMAN TABANLI OSİLASYON ***
 void RunOscillationTrajectory_Time(void)
 {
-    sm.osc_timer_ms += (CONTROL_LOOP_PERIOD * 1000.0f); // Zamanı ms cinsinden say
+    // --- 1. GİRDİ GÜVENLİĞİ (Input Sanitization) ---
+    // Arayüzden 0 veya çok tehlikeli değerler gelse bile sistem çökmez, güvenli limite çeker.
+    if (sm.osc_time_ms < 10.0f) sm.osc_time_ms = 10.0f; // Asgari 10ms koruması
+    if (sm.osc_accel_rpm_s < 100.0f) sm.osc_accel_rpm_s = 100.0f;
+
+    // --- 2. ZAMANLAYICI VE YÖN KONTROLÜ ---
+    sm.osc_timer_ms += (CONTROL_LOOP_PERIOD * 1000.0f);
 
     if (sm.osc_timer_ms >= sm.osc_time_ms) {
-        sm.osc_timer_ms = 0.0f;
-        sm.osc_state = (sm.osc_state == 0) ? 1 : 0; // Yön değiştir
+        sm.osc_timer_ms = 0.0f; // Asimetriyi önlemek için net sıfırlama
+        sm.osc_state = (sm.osc_state == 0) ? 1 : 0;
+
+        // *** 3. INTEGRATOR WINDUP (RUNAWAY) KORUMASI ***
+        // Yön değiştiğinde, motorun fiziksel ataletinden dolayı PI kontrolcüde
+        // birikmiş olan devasa hatayı (İntegrali) acımasızca çöpe atıyoruz!
+        // Bu sayede motor KESİNLİKLE runaway yapamaz.
+        float safe_traj = sm.current_traj_rpm;
+        InitControlVel(); // Tüm PID hatalarını ve birikimleri sıfırla
+        sm.current_traj_rpm = safe_traj; // Yörüngeyi (traj) sıfırlanmaktan kurtar
     }
 
-    float target_rpm_with_dir = sm.osc_max_rpm;
-    if (sm.osc_state == 1) target_rpm_with_dir = -sm.osc_max_rpm;
-
+    // --- 4. HIZ VE İVME HESAPLAMASI ---
+    float target_rpm = (sm.osc_state == 0) ? sm.osc_max_rpm : -sm.osc_max_rpm;
     float step_rpm = sm.osc_accel_rpm_s * CONTROL_LOOP_PERIOD;
 
-    if (sm.current_traj_rpm < target_rpm_with_dir) {
+    if (sm.current_traj_rpm < target_rpm) {
         sm.current_traj_rpm += step_rpm;
-        if (sm.current_traj_rpm > target_rpm_with_dir) sm.current_traj_rpm = target_rpm_with_dir;
-    } else if (sm.current_traj_rpm > target_rpm_with_dir) {
+        if (sm.current_traj_rpm > target_rpm) sm.current_traj_rpm = target_rpm;
+    } else if (sm.current_traj_rpm > target_rpm) {
         sm.current_traj_rpm -= step_rpm;
-        if (sm.current_traj_rpm < target_rpm_with_dir) sm.current_traj_rpm = target_rpm_with_dir;
+        if (sm.current_traj_rpm < target_rpm) sm.current_traj_rpm = target_rpm;
     }
 
+    // --- 5. MUTLAK ÇIKIŞ BARAJI (Hard Clamp) ---
+    // Eğer matematik bir şekilde taşarsa, çıkışı donanımsal limite kilitler.
+    if (sm.current_traj_rpm > sm.osc_max_rpm) sm.current_traj_rpm = sm.osc_max_rpm;
+    if (sm.current_traj_rpm < -sm.osc_max_rpm) sm.current_traj_rpm = -sm.osc_max_rpm;
+
+    // Motoru Sür
     VelocityControl(sm.current_traj_rpm, sm.act_velocity, 0.0f);
 }
 

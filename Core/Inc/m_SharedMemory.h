@@ -10,6 +10,24 @@
 
 #include <stdint.h>
 
+// *** FLASH (EEPROM EMÜLASYONU) TANIMLAMALARI ***
+// STM32F103C8T6'nın en son sayfasını (Page 63) ayarlarımız için ayırıyoruz.
+#define FLASH_PARAM_ADDR 0x0800FC00
+#define PARAM_MAGIC_WORD 0xE871B001 // DÜZELTİLDİ: Sadece geçerli HEX karakterleri
+
+typedef struct {
+    uint32_t magic;
+    float kp_vel;
+    float ki_vel;
+    float osc_time_ms;
+    float osc_target_deg;
+    float osc_max_rpm;
+    float osc_accel;
+} DeviceParams_t;
+
+void LoadParamsFromFlash(void);
+void SaveParamsToFlash(void);
+
 //*** MotorControl.c > MotorControl_Task() tip tanımları ***
 typedef enum {
 	MOT_STATE_IDLE,

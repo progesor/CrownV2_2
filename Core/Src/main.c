@@ -244,6 +244,7 @@ int main(void)
   Init_SerialComm();
 
   SharedMemoryInit();
+  LoadParamsFromFlash(); // YENİ: Açılışta kalıcı hafızadan PID ve Osilasyon ayarlarını çeker
 
   InitControlVel();
 

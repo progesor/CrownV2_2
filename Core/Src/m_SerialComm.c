@@ -206,6 +206,30 @@ void Process_Binary_Packet(void) {
                   SendSerialData((uint8_t*)"<DBG: CMD_OSC_TIME_OK>\n");
               }
               break;
+              // *** YENİ: ARAYÜZE GÜNCEL PARAMETRELERİ OKUYUP GÖNDERME ***
+                      case 0x60: // GET PARAMS
+                          if (payload_length == 0) {
+                              char prm_msg[100];
+                              snprintf(prm_msg, sizeof(prm_msg), "<PRM,%.2f,%.2f,%.0f,%.0f,%.0f,%.0f>\n",
+                                       sm.kp_velocity, sm.ki_velocity,
+                                       sm.osc_time_ms, sm.osc_target_deg,
+                                       sm.osc_max_rpm, sm.osc_accel_rpm_s);
+                              SendSerialData((uint8_t*)prm_msg);
+                          }
+                          break;
+
+                      // *** YENİ: KALICI HAFIZAYA (FLASH) KAYDETME ***
+                      case 0x70: // SAVE PARAMS TO FLASH
+                          if (payload_length == 0) {
+                              // Güvenlik: Motor çalışırken Flash'a yazılmaz! (İşlemci kilitlenmesini önler)
+                              if (sm.act_motor_state == MOT_STATE_IDLE) {
+                                  SaveParamsToFlash();
+                                  SendSerialData((uint8_t*)"<DBG: PARAMS_SAVED_FLASH>\n");
+                              } else {
+                                  SendSerialData((uint8_t*)"<DBG: ERR_CANT_SAVE_WHILE_RUNNING>\n");
+                              }
+                          }
+                          break;
   case 0x20:
     sm.act_motor_state = MOT_STATE_IDLE;
     sm.ref_velocity = 0.0f;

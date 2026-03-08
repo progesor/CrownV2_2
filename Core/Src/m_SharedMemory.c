@@ -6,6 +6,9 @@
  */
 
 #include "m_SharedMemory.h"
+#include "stm32f1xx_hal.h"
+#include <string.h>
+#include <stdio.h>
 #include "AppConfig.h"
 
 SharedMemory_t sm;
@@ -74,4 +77,62 @@ void SharedMemoryInit(void)
 
 	sm.max_allowed_rpm = 0.0f;
 
+}
+
+// *** CİHAZ AÇILIRKEN AYARLARI YÜKLEYEN FONKSİYON ***
+void LoadParamsFromFlash(void) {
+    DeviceParams_t *pFlash = (DeviceParams_t*)FLASH_PARAM_ADDR;
+
+    if (pFlash->magic == PARAM_MAGIC_WORD) {
+        // Hafızada ayar var, eski ayarları RAM'e çek!
+        sm.kp_velocity = pFlash->kp_vel;
+        sm.ki_velocity = pFlash->ki_vel;
+        sm.osc_time_ms = pFlash->osc_time_ms;
+        sm.osc_target_deg = pFlash->osc_target_deg;
+        sm.osc_max_rpm = pFlash->osc_max_rpm;
+        sm.osc_accel_rpm_s = pFlash->osc_accel;
+    } else {
+        // Cihaz fabrikadan yeni çıkmış (veya hafıza silinmiş), Varsayılanları yükle!
+        sm.kp_velocity = 1.0f;
+        sm.ki_velocity = 5.0f;
+        sm.osc_time_ms = 400.0f;
+        sm.osc_target_deg = 180.0f;
+        sm.osc_max_rpm = 2500.0f;
+        sm.osc_accel_rpm_s = 15000.0f;
+    }
+}
+
+// *** ARAYÜZDEN "KAYDET" DENİLDİĞİNDE ÇALIŞAN FONKSİYON ***
+void SaveParamsToFlash(void) {
+    HAL_FLASH_Unlock();
+
+    // 1. Önce eski sayfayı silmeliyiz (Flash'ın kuralı)
+    FLASH_EraseInitTypeDef EraseInitStruct;
+    uint32_t PageError = 0;
+    EraseInitStruct.TypeErase = FLASH_TYPEERASE_PAGES;
+    EraseInitStruct.PageAddress = FLASH_PARAM_ADDR;
+    EraseInitStruct.NbPages = 1;
+
+    if (HAL_FLASHEx_Erase(&EraseInitStruct, &PageError) != HAL_OK) {
+        HAL_FLASH_Lock();
+        return; // Hata olursa çık
+    }
+
+    // 2. Güncel RAM değerlerini yapıya doldur
+    DeviceParams_t params;
+    params.magic = PARAM_MAGIC_WORD;
+    params.kp_vel = sm.kp_velocity;
+    params.ki_vel = sm.ki_velocity;
+    params.osc_time_ms = sm.osc_time_ms;
+    params.osc_target_deg = sm.osc_target_deg;
+    params.osc_max_rpm = sm.osc_max_rpm;
+    params.osc_accel = sm.osc_accel_rpm_s;
+
+    // 3. Hafızaya Word (4 Byte) adım adım yaz
+    uint32_t *pData = (uint32_t*)&params;
+    for (int i = 0; i < sizeof(DeviceParams_t)/4; i++) {
+        HAL_FLASH_Program(FLASH_TYPEPROGRAM_WORD, FLASH_PARAM_ADDR + (i*4), pData[i]);
+    }
+
+    HAL_FLASH_Lock();
 }

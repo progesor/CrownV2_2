@@ -29,6 +29,7 @@ float TrajectoryGeneratorVel(float target_rpm, float accel_limit_rpm_s);
 //uint8_t VelocitySupervisor(float ref_vel_rpm, float act_vel_rpm, float pwm_duty);
 uint8_t StallSupervisor(float current, float pwm_duty, float ref_vel, float act_vel);
 void RunOscillationTrajectory(void);
+void RunOscillationTrajectory_Time(void);
 
 
 #endif /* INC_M_MOTORCONTROL_H_ */

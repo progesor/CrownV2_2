@@ -21,6 +21,7 @@ class ErtipCrownApp(ctk.CTk):
         self.is_connected = False
         self.target_rpm = 0.0
         self.motor_running = False
+        self.current_mode = "IDLE"
         
         # Thread Güvenliği ve Senkronizasyon
         self.ack_event = threading.Event()
@@ -113,7 +114,60 @@ class ErtipCrownApp(ctk.CTk):
 
     def setup_recipe_tab(self):
         tab = self.tabview.tab("Reçete (Sequence)")
-        ctk.CTkLabel(tab, text="Çok Adımlı Reçete Sistemi (Yakında Eklenecek)", text_color="gray").pack(pady=50)
+        
+        # MOD SEÇİCİ (AÇI vs ZAMAN)
+        self.osc_mode_var = ctk.StringVar(value="Zaman Tabanlı (Medikal Punch)")
+        self.seg_btn = ctk.CTkSegmentedButton(tab, values=["Açı Tabanlı (Klasik)", "Zaman Tabanlı (Medikal Punch)"],
+                                              variable=self.osc_mode_var, command=self.change_osc_mode_ui)
+        self.seg_btn.pack(pady=(10, 15), padx=20, fill="x")
+
+        # DİNAMİK ALAN (Açı veya Süre)
+        self.dynamic_lbl_title = ctk.CTkLabel(tab, text="Hareket Süresi - Wide (Milisaniye):", font=ctk.CTkFont(size=14))
+        self.dynamic_lbl_title.pack(pady=(5, 0))
+        
+        self.lbl_osc_primary = ctk.CTkLabel(tab, text="400 ms", font=ctk.CTkFont(size=14, weight="bold"))
+        self.lbl_osc_primary.pack()
+        
+        self.slider_osc_primary = ctk.CTkSlider(tab, from_=50.0, to=1000.0, command=self.update_primary_label)
+        self.slider_osc_primary.set(400)
+        self.slider_osc_primary.pack(pady=5, padx=20, fill="x")
+
+        # STRENGTH (HIZ) AYARI
+        ctk.CTkLabel(tab, text="Hedef Hız - Strength (RPM):", font=ctk.CTkFont(size=14)).pack(pady=(5, 0))
+        self.lbl_osc_rpm = ctk.CTkLabel(tab, text="2500", font=ctk.CTkFont(size=14, weight="bold"))
+        self.lbl_osc_rpm.pack()
+        self.slider_osc_rpm = ctk.CTkSlider(tab, from_=500.0, to=15000.0, command=lambda v: self.lbl_osc_rpm.configure(text=f"{int(v)}"))
+        self.slider_osc_rpm.set(2500)
+        self.slider_osc_rpm.pack(pady=5, padx=20, fill="x")
+
+        # İVME (PUNCH ETKİSİ) AYARI
+        ctk.CTkLabel(tab, text="İvme - Punch Etkisi (RPM/s):", font=ctk.CTkFont(size=14)).pack(pady=(5, 0))
+        self.lbl_osc_accel = ctk.CTkLabel(tab, text="15000", font=ctk.CTkFont(size=14, weight="bold"))
+        self.lbl_osc_accel.pack()
+        self.slider_osc_accel = ctk.CTkSlider(tab, from_=1000.0, to=30000.0, command=lambda v: self.lbl_osc_accel.configure(text=f"{int(v)}"))
+        self.slider_osc_accel.set(15000)
+        self.slider_osc_accel.pack(pady=5, padx=20, fill="x")
+
+        self.btn_send_osc = ctk.CTkButton(tab, text="OSİLASYONU BAŞLAT", fg_color="#8e44ad", hover_color="#732d91", height=40, command=self.send_oscillation)
+        self.btn_send_osc.pack(pady=15, padx=20, fill="x")
+        
+    def change_osc_mode_ui(self, value):
+        if value == "Açı Tabanlı (Klasik)":
+            self.dynamic_lbl_title.configure(text="Osilasyon Açısı (Derece):")
+            self.slider_osc_primary.configure(from_=10.0, to=720.0)
+            self.slider_osc_primary.set(180)
+            self.lbl_osc_primary.configure(text="180 Derece")
+        else:
+            self.dynamic_lbl_title.configure(text="Hareket Süresi - Wide (Milisaniye):")
+            self.slider_osc_primary.configure(from_=50.0, to=1000.0)
+            self.slider_osc_primary.set(400)
+            self.lbl_osc_primary.configure(text="400 ms")
+
+    def update_primary_label(self, val):
+        if self.osc_mode_var.get() == "Açı Tabanlı (Klasik)":
+            self.lbl_osc_primary.configure(text=f"{int(val)} Derece")
+        else:
+            self.lbl_osc_primary.configure(text=f"{int(val)} ms")
         
     def setup_pid_tab(self):
         tab = self.tabview.tab("PID Kalibrasyon")
@@ -237,13 +291,28 @@ class ErtipCrownApp(ctk.CTk):
         
     def send_rpm(self):
         if self.is_connected:
+            self.current_mode = "RPM"  # MODU GÜNCELLE
             self.target_rpm = float(self.rpm_slider.get())
             self.motor_running = True
             payload = struct.pack('<f', self.target_rpm)
             self.send_reliable(0x10, payload, retries=3)
+            
+    def send_oscillation(self):
+        if self.is_connected:
+            self.current_mode = "OSC_TIME" if self.osc_mode_var.get() == "Zaman Tabanlı (Medikal Punch)" else "OSC_ANG"
+            self.motor_running = True
+            
+            primary_val = float(self.slider_osc_primary.get()) # Süre veya Açı
+            rpm = float(self.slider_osc_rpm.get())
+            accel = float(self.slider_osc_accel.get())
+            
+            payload = struct.pack('<fff', primary_val, rpm, accel)
+            cmd = 0x50 if self.current_mode == "OSC_TIME" else 0x40
+            self.send_reliable(cmd, payload, retries=3)
 
     def send_stop(self):
         if self.is_connected:
+            self.current_mode = "IDLE" # MODU GÜNCELLE
             self.motor_running = False
             self.send_reliable(0x20, retries=3)
 
@@ -251,9 +320,10 @@ class ErtipCrownApp(ctk.CTk):
     def heartbeat_worker(self):
         while True:
             time.sleep(0.3) # 300ms Bekle
-            if self.is_connected and self.motor_running:
-                payload = struct.pack('<f', self.target_rpm)
-                self.send_reliable(0x10, payload, retries=2) 
+            # Motor çalışsa da çalışmasa da hattın canlı olduğunu cihaza bildiririz
+            if self.is_connected:
+                # 0x01 PING komutu, Payload yok (b"")
+                self.send_reliable(0x01, b"", retries=1)
 
     def serial_reader_thread(self):
         while self.is_connected:
@@ -275,6 +345,13 @@ class ErtipCrownApp(ctk.CTk):
                             
                         elif line.startswith("<DBG: WATCHDOG"):
                             self.lbl_status.configure(text="Durum: WATCHDOG DEVREDE!", text_color="red")
+                            
+                        elif line.startswith("<DBG: CMD_") or line.startswith("<DBG: HB_OK"):
+                            self.ack_event.set() # Gönderici Thread'i uyandır
+                            
+                            # Ekrana sadece gerçek komutlarda uyarı yaz, Ping'lerde arayüzü yorma
+                            if not line.startswith("<DBG: HB_OK"):
+                                self.lbl_status.configure(text="Durum: Motor Çalışıyor", text_color="green")
             except:
                 pass
 

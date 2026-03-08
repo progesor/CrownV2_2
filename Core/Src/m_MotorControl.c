@@ -114,6 +114,20 @@ void MotorControl_Task(void)
 			DriveMotor(dc, 1u, 1u);
 		} break;
 
+		case MOT_STATE_TIME_OSC_CONTROL_INIT:
+		{
+			InitControlVel();
+			sm.osc_timer_ms = 0.0f;
+			sm.osc_state = 0u;
+			sm.current_traj_rpm = 0.0f;
+			sm.act_motor_state = MOT_STATE_TIME_OSC_CONTROL;
+		} break;
+
+		case MOT_STATE_TIME_OSC_CONTROL:
+		{
+			RunOscillationTrajectory_Time();
+		} break;
+
 	}
 }
 
@@ -185,6 +199,31 @@ void RunOscillationTrajectory(void)
     }
 
     // Kontrolcüye Gönder
+    VelocityControl(sm.current_traj_rpm, sm.act_velocity, 0.0f);
+}
+
+void RunOscillationTrajectory_Time(void)
+{
+    sm.osc_timer_ms += (CONTROL_LOOP_PERIOD * 1000.0f); // Zamanı ms cinsinden say
+
+    if (sm.osc_timer_ms >= sm.osc_time_ms) {
+        sm.osc_timer_ms = 0.0f;
+        sm.osc_state = (sm.osc_state == 0) ? 1 : 0; // Yön değiştir
+    }
+
+    float target_rpm_with_dir = sm.osc_max_rpm;
+    if (sm.osc_state == 1) target_rpm_with_dir = -sm.osc_max_rpm;
+
+    float step_rpm = sm.osc_accel_rpm_s * CONTROL_LOOP_PERIOD;
+
+    if (sm.current_traj_rpm < target_rpm_with_dir) {
+        sm.current_traj_rpm += step_rpm;
+        if (sm.current_traj_rpm > target_rpm_with_dir) sm.current_traj_rpm = target_rpm_with_dir;
+    } else if (sm.current_traj_rpm > target_rpm_with_dir) {
+        sm.current_traj_rpm -= step_rpm;
+        if (sm.current_traj_rpm < target_rpm_with_dir) sm.current_traj_rpm = target_rpm_with_dir;
+    }
+
     VelocityControl(sm.current_traj_rpm, sm.act_velocity, 0.0f);
 }
 
@@ -303,12 +342,12 @@ float TrajectoryGeneratorVel(float target_rpm, float accel_limit_rpm_s)
 
 uint8_t StallSupervisor(float current, float pwm_duty, float ref_pos, float act_pos)
 {
-	// Eğer motor sadece hız kontrol modundaysa (Continuous), Stall denetimini atla!
-		if (sm.act_motor_state == MOT_STATE_VEL_CONTROL || sm.act_motor_state == MOT_STATE_VEL_CONTROL_INIT) {
-			stall_detected = 0u;
-			act_stall_state = STALL_IDLE;
-			return 0;
-		}
+	// Hız Modu ve Yeni Zamanlı Osilasyon Modunda Pozisyon Sıkışmasını Yoksay!
+	if (sm.act_motor_state == MOT_STATE_VEL_CONTROL || sm.act_motor_state == MOT_STATE_TIME_OSC_CONTROL) {
+	      stall_detected = 0u;
+	      act_stall_state = STALL_IDLE;
+	   return 0;
+	}
 
 	//float pos_error = fabsf(ref_pos - act_pos);
 	float pos_error_limit = ref_pos * 0.1f;

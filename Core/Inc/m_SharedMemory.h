@@ -19,7 +19,9 @@ typedef enum {
 	MOT_STATE_POS_CONTROL,
 	MOT_STATE_VEL_CONTROL_END,
 	MOT_STATE_POS_CONTROL_END,
-	MOT_STATE_MANUAL_CONTROL
+	MOT_STATE_MANUAL_CONTROL,
+	MOT_STATE_TIME_OSC_CONTROL_INIT,
+	MOT_STATE_TIME_OSC_CONTROL
 } MotorState_t;
 
 typedef struct
@@ -86,6 +88,9 @@ typedef struct
 	uint8_t osc_state;          // 0: İleri Git, 1: Geri Dön
 
 	float max_allowed_rpm;
+
+	float osc_time_ms;          // YENİ: Zaman tabanlı mod için hareket süresi
+	float osc_timer_ms;         // YENİ: Zaman tabanlı mod sayacı
 
 
 } SharedMemory_t;

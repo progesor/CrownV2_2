@@ -152,7 +152,6 @@ static void MX_USART3_UART_Init(void);
 void SendSerialData(uint8_t *buffer);
 
 //uint8_t rx_byte = 0u;		// Seri haberleşmeden gelen byte
-uint32_t rx_irq_count = 0u;
 ProgramState_t operation_state;
 
 
@@ -178,9 +177,9 @@ void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef *htim)
     if (htim == &htim2)
     {
         HAL_GPIO_WritePin(DO_Led_GPIO_Port, DO_Led_Pin, 1u);
-        UpdateADC_FromDMA_Task();
-        UpdateEncoder_Task();
-        MotorControl_Task();
+        UpdateAdcFromDmaTask();
+        UpdateEncoderTask();
+        MotorControlTask();
         HAL_GPIO_WritePin(DO_Led_GPIO_Port, DO_Led_Pin, 0u);
     }
 }
@@ -246,22 +245,22 @@ int main(void)
   /* USER CODE BEGIN 2 */
 
   // ADC ve DMA başlatma işlemleri
-  Init_ADC();
+  InitAdc();
 
   // TIM1: PWM CH1 başlat (PA8)
-  Init_Tim1();
+  InitTim1();
 
   // TIM2: Control Loop
-  Init_Tim2();
+  InitTim2();
 
   // TIM4: Enkoder sayacı timer'ını başlat
-  Init_Tim4();
+  InitTim4();
 
   // *** UART'I TIM2'DEN DAHA ÖNCELİKLİ HALE GETİR (Overrun Çözümü) ***
     HAL_NVIC_SetPriority(USART3_IRQn, 0, 0); // En yüksek öncelik
     HAL_NVIC_SetPriority(TIM2_IRQn, 2, 0);   // Daha düşük öncelik
 
-  Init_SerialComm();
+  InitSerialComm();
 
   SharedMemoryInit();
   LoadParamsFromFlash(); // YENİ: Açılışta kalıcı hafızadan PID ve Osilasyon ayarlarını çeker
@@ -304,7 +303,7 @@ int main(void)
 	        if(rx_data_ready)
 	        {
 	            __disable_irq();             // Tüm kesmeleri (TIM2 dahil) kısa süreliğine DURDUR
-	            Process_Binary_Packet();     // Verileri güvenle ve bölünmeden güncelle
+	            ProcessBinaryPacket();     // Verileri güvenle ve bölünmeden güncelle
 	            __enable_irq();              // Kesmeleri tekrar AÇ
 
      	      rx_data_ready = 0u;

@@ -28,7 +28,7 @@ static volatile uint16_t tim4_cnt_last = 0;						// Enkoder okumada kullanılan 
  *
  * @return None
  */
-void Init_ADC(void)
+void InitAdc(void)
 {
 	// ADC işlemleri
 	HAL_ADCEx_Calibration_Start(&hadc1);
@@ -43,7 +43,7 @@ void Init_ADC(void)
  *
  * @return None
  */
-void Init_Tim1(void)
+void InitTim1(void)
 {
 	HAL_TIM_PWM_Start(&htim1, TIM_CHANNEL_1);			// Motor PWM çıkışı için...
 	 __HAL_TIM_SET_COMPARE(&htim1, TIM_CHANNEL_1, 0);  	// Başlangıçta motor durur vaziyette olması için...
@@ -57,7 +57,7 @@ void Init_Tim1(void)
  *
  * @return None
  */
-void Init_Tim2(void)
+void InitTim2(void)
 {
 	HAL_TIM_Base_Start_IT(&htim2); // Timer 2'yi kesme modunda başlat
 }
@@ -70,7 +70,7 @@ void Init_Tim2(void)
  *
  * @return None
  */
-void Init_Tim4(void)
+void InitTim4(void)
 {
 	HAL_TIM_Encoder_Start(&htim4, TIM_CHANNEL_ALL);		// Encoder okumak için...
 	tim4_cnt_last = (uint16_t)__HAL_TIM_GET_COUNTER(&htim4);
@@ -86,7 +86,7 @@ void Init_Tim4(void)
  *
  * @return None
  */
-void UpdateADC_FromDMA_Task(void)
+void UpdateAdcFromDmaTask(void)
 {
 	// 1. Ham verileri DMA buffer'ından al
 	uint16_t adc_ch0 = adc_dma_buf[0];   // PA0 - hız referansı
@@ -148,7 +148,7 @@ void UpdateADC_FromDMA_Task(void)
  *
  * @return None
  */
-void UpdateEncoder_Task(void)
+void UpdateEncoderTask(void)
 {
 	// 1. Enkoder sayacını oku
 	uint16_t curr_cnt = (uint16_t)__HAL_TIM_GET_COUNTER(&htim4);
@@ -202,7 +202,7 @@ void UpdateEncoder_Task(void)
  *
  * @return None
  */
-void ScanIO_Task(void)
+void ScanIoTask(void)
 {
 	//sm.pedal_state = HAL_GPIO_ReadPin(DI_Pedal_GPIO_Port, DI_Pedal_Pin);
 }

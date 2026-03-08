@@ -10,17 +10,8 @@
 #include "AppConfig.h"
 #include <math.h>
 
-// MotorControl_Task()
-volatile float ref_position_deg = 0.0f;
+// MotorControlTask()
 volatile float act_position_offset = 0.0f;   			// Trajectory generation başındaki mutlak pozisyon
-volatile uint8_t stall_exists = 0u;		// *** Debug modunda stall a girip girmediğini algılamak için geçici olarak global ekledim.
-
-// ***VelocitySupervisor detection algoritmasını geliştirirken geçici olarak global tanımladım. Normalde local olacak.
-volatile float rv = 0.0f;
-volatile float rv1 = 0.0f;
-
-// Position kontrol için (P kontrolör)
-float sat_limit_max_position = REF_VELOCITY_MAX;	// Pozisyon kontrol döngüsündeki maks. hız saturasyon limiti (rpm)
 
 // Velocity kontrol için (PI kontrolör)
 float k_anti_windup = 0.0f;					// Hız kontrol K_Anti_Windup kazancı *** TI çarpılacak
@@ -53,7 +44,7 @@ uint8_t stall_detected = 0u;	// *** Debug modunda stall a girip girmediğini alg
  *
  * @return None
  */
-void MotorControl_Task(void)
+void MotorControlTask(void)
 {
 	switch(sm.act_motor_state)
 	{
@@ -134,7 +125,7 @@ void MotorControl_Task(void)
 
 		case MOT_STATE_TIME_OSC_CONTROL:
 		{
-			RunOscillationTrajectory_Time();
+			RunOscillationTrajectoryTime();
 		} break;
 
 	}
@@ -228,7 +219,7 @@ void RunOscillationTrajectory(void)
  *
  * @return None
  */
-void RunOscillationTrajectory_Time(void)
+void RunOscillationTrajectoryTime(void)
 {
     // --- 1. AKILLI SİMETRİ ASİSTAN (Fiziksel Limit Koruması) ---
     // Verilen ivme ve süre ile motorun "0" noktasından geçerek çizebileceği maksimum tepe hızı hesaplar.
@@ -305,7 +296,6 @@ void InitControlVel(void)
 void InitControlPos(void)
 {
 	act_position_offset = sm.act_position;	// Başlangıç mutlak konumu al, offset olarak ayarlar. (relative referansın orijini)
-	ref_position_deg = sm.ref_position + act_position_offset;	// Realtive uzayda tanımlı ref_position ı mutlak uzaya taşır.
 	sm.act_position_relative = 0.0f;		// Relative uzaydaki relative konum hesabında kullanılır.
 	stall_suppress_cnt = 0u;
 	stall_wait_cnt = 0u;

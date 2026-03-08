@@ -13,6 +13,14 @@
 
 SharedMemory_t sm;
 
+/**
+ * @brief Initializes the shared memory structure.
+ *
+ * Sets all variables in the global `sm` structure to their default starting values,
+ * including target limits, states, PID gains, and trajectory parameters.
+ *
+ * @return None
+ */
 void SharedMemoryInit(void)
 {
 	// *** BEGIN: IO.c değişkenleri ***
@@ -79,7 +87,15 @@ void SharedMemoryInit(void)
 
 }
 
-// *** CİHAZ AÇILIRKEN AYARLARI YÜKLEYEN FONKSİYON ***
+/**
+ * @brief Loads non-volatile parameters from Flash memory on startup.
+ *
+ * Checks if saved parameters exist by verifying a magic word. If valid, it loads
+ * saved values (PID gains, oscillation settings) into the shared memory.
+ * Otherwise, it initializes them with factory defaults.
+ *
+ * @return None
+ */
 void LoadParamsFromFlash(void) {
     DeviceParams_t *pFlash = (DeviceParams_t*)FLASH_PARAM_ADDR;
 
@@ -102,7 +118,15 @@ void LoadParamsFromFlash(void) {
     }
 }
 
-// *** ARAYÜZDEN "KAYDET" DENİLDİĞİNDE ÇALIŞAN FONKSİYON ***
+/**
+ * @brief Saves current parameters to Flash memory.
+ *
+ * Erases the designated Flash page and writes the current operational parameters
+ * (PID gains, oscillation settings) along with a magic word to ensure persistence
+ * across power cycles.
+ *
+ * @return None
+ */
 void SaveParamsToFlash(void) {
     HAL_FLASH_Unlock();
 

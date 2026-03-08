@@ -152,7 +152,6 @@ static void MX_USART3_UART_Init(void);
 void SendSerialData(uint8_t *buffer);
 
 //uint8_t rx_byte = 0u;		// Seri haberleşmeden gelen byte
-uint32_t rx_irq_count = 0u;
 ProgramState_t operation_state;
 
 
@@ -162,19 +161,39 @@ ProgramState_t operation_state;
 /* USER CODE BEGIN 0 */
 
 
+/**
+ * @brief  Period elapsed callback in non-blocking mode.
+ *
+ * Called when the specified timer reaches its period and generates an interrupt.
+ * For TIM2, this executes the hard real-time control loop tasks, including
+ * reading ADC values, updating the encoder, and running the motor control task.
+ *
+ * @param  htim Pointer to a TIM_HandleTypeDef structure that contains
+ *              the configuration information for the specified TIM module.
+ * @retval None
+ */
 void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef *htim)
 {
     if (htim == &htim2)
     {
         HAL_GPIO_WritePin(DO_Led_GPIO_Port, DO_Led_Pin, 1u);
-        UpdateADC_FromDMA_Task();
-        UpdateEncoder_Task();
-        MotorControl_Task();
+        UpdateAdcFromDmaTask();
+        UpdateEncoderTask();
+        MotorControlTask();
         HAL_GPIO_WritePin(DO_Led_GPIO_Port, DO_Led_Pin, 0u);
     }
 }
 
-// GÜVENLİ VE KİLİTLENMEYEN GÖNDERİM FONKSİYONU
+/**
+ * @brief Safely sends a buffer of data over UART3 without blocking forever.
+ *
+ * Implements a non-blocking or timeout-limited method to transmit data over
+ * the serial connection. This ensures the main loop isn't stalled if the
+ * communication hardware fails.
+ *
+ * @param buffer Pointer to the null-terminated string/data to be sent.
+ * @retval None
+ */
 void SendSerialData(uint8_t *buffer)
 {
     if (buffer == NULL) return;
@@ -226,22 +245,22 @@ int main(void)
   /* USER CODE BEGIN 2 */
 
   // ADC ve DMA başlatma işlemleri
-  Init_ADC();
+  InitAdc();
 
   // TIM1: PWM CH1 başlat (PA8)
-  Init_Tim1();
+  InitTim1();
 
   // TIM2: Control Loop
-  Init_Tim2();
+  InitTim2();
 
   // TIM4: Enkoder sayacı timer'ını başlat
-  Init_Tim4();
+  InitTim4();
 
   // *** UART'I TIM2'DEN DAHA ÖNCELİKLİ HALE GETİR (Overrun Çözümü) ***
     HAL_NVIC_SetPriority(USART3_IRQn, 0, 0); // En yüksek öncelik
     HAL_NVIC_SetPriority(TIM2_IRQn, 2, 0);   // Daha düşük öncelik
 
-  Init_SerialComm();
+  InitSerialComm();
 
   SharedMemoryInit();
   LoadParamsFromFlash(); // YENİ: Açılışta kalıcı hafızadan PID ve Osilasyon ayarlarını çeker
@@ -284,7 +303,7 @@ int main(void)
 	        if(rx_data_ready)
 	        {
 	            __disable_irq();             // Tüm kesmeleri (TIM2 dahil) kısa süreliğine DURDUR
-	            Process_Binary_Packet();     // Verileri güvenle ve bölünmeden güncelle
+	            ProcessBinaryPacket();     // Verileri güvenle ve bölünmeden güncelle
 	            __enable_irq();              // Kesmeleri tekrar AÇ
 
      	      rx_data_ready = 0u;
@@ -892,6 +911,10 @@ static void MX_GPIO_Init(void)
 
 /**
   * @brief  This function is executed in case of error occurrence.
+  *
+  * Disables interrupts and loops infinitely. Used as a hard fault or HAL
+  * error fallback.
+  *
   * @retval None
   */
 void Error_Handler(void)

@@ -10,17 +10,8 @@
 #include "AppConfig.h"
 #include <math.h>
 
-// MotorControl_Task()
-volatile float ref_position_deg = 0.0f;
+// MotorControlTask()
 volatile float act_position_offset = 0.0f;   			// Trajectory generation başındaki mutlak pozisyon
-volatile uint8_t stall_exists = 0u;		// *** Debug modunda stall a girip girmediğini algılamak için geçici olarak global ekledim.
-
-// ***VelocitySupervisor detection algoritmasını geliştirirken geçici olarak global tanımladım. Normalde local olacak.
-volatile float rv = 0.0f;
-volatile float rv1 = 0.0f;
-
-// Position kontrol için (P kontrolör)
-float sat_limit_max_position = REF_VELOCITY_MAX;	// Pozisyon kontrol döngüsündeki maks. hız saturasyon limiti (rpm)
 
 // Velocity kontrol için (PI kontrolör)
 float k_anti_windup = 0.0f;					// Hız kontrol K_Anti_Windup kazancı *** TI çarpılacak
@@ -44,7 +35,16 @@ uint16_t stall_suppress_cnt = 0u;
 uint16_t stall_wait_cnt = 0u;
 uint8_t stall_detected = 0u;	// *** Debug modunda stall a girip girmediğini algılamak için geçici olarak global ekledim.
 
-void MotorControl_Task(void)
+/**
+ * @brief Executes the motor control state machine.
+ *
+ * This task is called periodically (e.g., from the TIM2 ISR) to evaluate the current
+ * motor state (`sm.act_motor_state`) and execute the appropriate control logic, such as
+ * position control, velocity control, or manual control.
+ *
+ * @return None
+ */
+void MotorControlTask(void)
 {
 	switch(sm.act_motor_state)
 	{
@@ -125,13 +125,21 @@ void MotorControl_Task(void)
 
 		case MOT_STATE_TIME_OSC_CONTROL:
 		{
-			RunOscillationTrajectory_Time();
+			RunOscillationTrajectoryTime();
 		} break;
 
 	}
 }
 
-// Trapezoidal Osilasyon Fonksiyonu
+/**
+ * @brief Executes a trapezoidal position-based oscillation trajectory.
+ *
+ * Calculates the target position and manages the acceleration/deceleration phases
+ * to achieve a smooth oscillation movement. It uses a hybrid kinematic approach
+ * to prevent square-root explosions and ensures the motor doesn't stall.
+ *
+ * @return None
+ */
 void RunOscillationTrajectory(void)
 {
     float target_pos = (sm.osc_state == 0) ? sm.osc_target_deg : 0.0f;
@@ -202,8 +210,16 @@ void RunOscillationTrajectory(void)
     VelocityControl(sm.current_traj_rpm, sm.act_velocity, 0.0f);
 }
 
-// *** HATA GEÇİRMEZ (FOOLPROOF) ZAMAN TABANLI OSİLASYON ***
-void RunOscillationTrajectory_Time(void)
+/**
+ * @brief Executes a foolproof time-based oscillation trajectory.
+ *
+ * Calculates trajectory speeds based on a time duration instead of position. It calculates
+ * the maximum achievable RPM based on acceleration and time to ensure smooth, symmetrical
+ * oscillation without exceeding physical limits.
+ *
+ * @return None
+ */
+void RunOscillationTrajectoryTime(void)
 {
     // --- 1. AKILLI SİMETRİ ASİSTAN (Fiziksel Limit Koruması) ---
     // Verilen ivme ve süre ile motorun "0" noktasından geçerek çizebileceği maksimum tepe hızı hesaplar.
@@ -253,6 +269,14 @@ void RunOscillationTrajectory_Time(void)
     VelocityControl(sm.current_traj_rpm, sm.act_velocity, 0.0f);
 }
 
+/**
+ * @brief Initializes the velocity control parameters.
+ *
+ * Resets the integral term, anti-windup gain, LPF memory, and trajectory generator
+ * reference to prepare for a new velocity control phase.
+ *
+ * @return None
+ */
 void InitControlVel(void)
 {
 	k_anti_windup = 1.0f * (sm.ki_velocity / sm.kp_velocity);	// VelocityControl() içindeki Anti-Windup katsayısını günceller.
@@ -261,16 +285,33 @@ void InitControlVel(void)
 	ramped_ref_rpm = 0.0f;		// TrajectoryGeneratorVel() içindeki rampa referans değerini sıfırlar.
 }
 
+/**
+ * @brief Initializes the position control parameters.
+ *
+ * Sets the current absolute position as the relative origin and resets stall detection counters
+ * to prepare for a new position control phase.
+ *
+ * @return None
+ */
 void InitControlPos(void)
 {
 	act_position_offset = sm.act_position;	// Başlangıç mutlak konumu al, offset olarak ayarlar. (relative referansın orijini)
-	ref_position_deg = sm.ref_position + act_position_offset;	// Realtive uzayda tanımlı ref_position ı mutlak uzaya taşır.
 	sm.act_position_relative = 0.0f;		// Relative uzaydaki relative konum hesabında kullanılır.
 	stall_suppress_cnt = 0u;
 	stall_wait_cnt = 0u;
 	stall_detected = 0u;
 }
 
+/**
+ * @brief Proportional (P) position controller.
+ *
+ * Calculates a target velocity based on the position error.
+ *
+ * @param ref_pos_deg The reference (target) position in degrees.
+ * @param act_pos_deg The actual (current) position in degrees.
+ * @param uo_vel_limit The maximum allowable velocity output limit.
+ * @return The calculated velocity output to correct the position error.
+ */
 float PositionControl(float ref_pos_deg, float act_pos_deg, float uo_vel_limit)
 {
 	// 1) Hata: referans derece - ölçülen derece hesaplanır.
@@ -289,7 +330,17 @@ float PositionControl(float ref_pos_deg, float act_pos_deg, float uo_vel_limit)
 	return up_pos;
 }
 
-// m_MotorControl.c içindeki VelocityControl fonksiyonunun güncellenmiş hali
+/**
+ * @brief Proportional-Integral (PI) velocity controller.
+ *
+ * Calculates the PWM duty cycle to achieve the target reference velocity. Includes
+ * integral windup protection and low-pass filtering on the output to prevent motor vibration.
+ *
+ * @param ref_vel_rpm The reference (target) velocity in RPM.
+ * @param act_vel_rpm The actual (current) velocity in RPM.
+ * @param ff_vel_rpm Feed-forward velocity in RPM (currently unused).
+ * @return None
+ */
 void VelocityControl(float ref_vel_rpm, float act_vel_rpm, float ff_vel_rpm)
 {
 	uint8_t dir = 1;
@@ -338,6 +389,16 @@ void VelocityControl(float ref_vel_rpm, float act_vel_rpm, float ff_vel_rpm)
 	DriveMotor(uo_vel_sat0, dir, 1u);
 }
 
+/**
+ * @brief Generates a velocity trajectory with a slew rate limit.
+ *
+ * Smoothly ramps the reference velocity towards the target velocity, limiting the
+ * maximum change per control loop based on the specified acceleration limit.
+ *
+ * @param target_rpm The final target velocity in RPM.
+ * @param accel_limit_rpm_s The maximum allowable acceleration in RPM per second.
+ * @return The ramped reference velocity for the current control step.
+ */
 float TrajectoryGeneratorVel(float target_rpm, float accel_limit_rpm_s)
 {
 	if (!isfinite(target_rpm))  target_rpm = 0.0f;
@@ -366,6 +427,19 @@ float TrajectoryGeneratorVel(float target_rpm, float accel_limit_rpm_s)
     return ramped_ref_rpm;
 }
 
+/**
+ * @brief Supervises the motor to detect and handle stall conditions.
+ *
+ * Monitors position error (and potentially current/PWM) to determine if the motor is
+ * mechanically stalled. If a stall is detected, it handles suppression (e.g., clearing
+ * integrators) and eventually protection (stopping the motor).
+ *
+ * @param current The actual motor current (currently unused in logic).
+ * @param pwm_duty The current PWM duty cycle (currently unused in logic).
+ * @param ref_pos The reference (target) position.
+ * @param act_pos The actual (current) position.
+ * @return 1 if the motor is in a protected (stopped) state due to a stall, 0 otherwise.
+ */
 uint8_t StallSupervisor(float current, float pwm_duty, float ref_pos, float act_pos)
 {
 	// Hız Modu ve Yeni Zamanlı Osilasyon Modunda Pozisyon Sıkışmasını Yoksay!

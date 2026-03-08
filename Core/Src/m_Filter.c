@@ -8,8 +8,8 @@
 #include "m_Filter.h"
 #include "AppConfig.h"
 
-float future_value = 0.0f;
-float rate_velocity = 0.0f;
+static float future_value = 0.0f;
+static float rate_velocity = 0.0f;
 
 int ScaleValues(uint16_t value_in, int limit, int step)
 {

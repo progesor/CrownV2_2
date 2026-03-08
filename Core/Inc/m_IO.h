@@ -30,13 +30,13 @@
 ////#define K_MOTOR_CURRENT_SENSE	0.0016f   			// ADC tam skalada hedef motor akım katsayısı (A)
 //#define K_MOTOR_CURRENT_SENSE	1.6f   				// ADC tam skalada hedef motor akım katsayısı (mA)
 
-void Init_ADC(void);
-void Init_Tim1(void);
-void Init_Tim2(void);
-void Init_Tim4(void);
-void UpdateADC_FromDMA_Task(void);
-void UpdateEncoder_Task(void);
-void ScanIO_Task(void);
+void InitAdc(void);
+void InitTim1(void);
+void InitTim2(void);
+void InitTim4(void);
+void UpdateAdcFromDmaTask(void);
+void UpdateEncoderTask(void);
+void ScanIoTask(void);
 void DriveMotor(float pwm_duty, uint8_t direction, uint8_t brake_status);
 
 

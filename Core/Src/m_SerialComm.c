@@ -30,7 +30,7 @@ volatile uint8_t rx_data_ready = 0u;
 volatile uint16_t rx_data_length = 0u;
 volatile uint8_t rx_needs_restart = 0u;
 
-uint16_t Calculate_CRC16(uint8_t * buffer, uint16_t length) {
+uint16_t CalculateCrc16(uint8_t * buffer, uint16_t length) {
   uint16_t crc = 0xFFFF;
   for (uint16_t pos = 0; pos < length; pos++) {
     crc ^= (uint16_t) buffer[pos];
@@ -46,7 +46,7 @@ uint16_t Calculate_CRC16(uint8_t * buffer, uint16_t length) {
   return crc;
 }
 
-void Init_SerialComm(void) {
+void InitSerialComm(void) {
   rx_state = 0;
   rx_needs_restart = 0;
   HAL_UART_Receive_IT( & huart3, & rx_byte, 1);
@@ -114,13 +114,13 @@ void HAL_UART_ErrorCallback(UART_HandleTypeDef * huart) {
   }
 }
 
-void Process_Binary_Packet(void) {
+void ProcessBinaryPacket(void) {
   if (rx_data_length < 6) return;
 
   uint8_t payload_length = process_buffer[2];
   uint16_t expected_total_len = 6 + payload_length;
 
-  uint16_t calc_crc = Calculate_CRC16( & process_buffer[2], 2 + payload_length);
+  uint16_t calc_crc = CalculateCrc16( & process_buffer[2], 2 + payload_length);
   uint16_t rx_crc = process_buffer[expected_total_len - 2] | (process_buffer[expected_total_len - 1] << 8);
 
   if (calc_crc != rx_crc) return;

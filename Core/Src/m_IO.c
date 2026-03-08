@@ -110,14 +110,29 @@ void UpdateEncoder_Task(void)
 	// 4. 32-bit konum sayacı (toplam count)
 	sm.encoder_position_count += (int32_t)difference;
 
+    // *** YENİ: SESSİZ KATİL (OVERFLOW / HASSASİYET KAYBI) KORUMASI ***
+    // Motor Continuous (Sürekli Hız) modundayken pozisyonun milyarlara gitmesine gerek yoktur.
+    // Yaklaşık 10 Turda bir (örneğin 3600 dereceye denk gelen enkoder pulse'ında) sistemi sıfırla.
+    // NOT: Bu sıfırlama işlemi osilasyon (Açı) modundayken YAPILMAZ! Aksi halde hedef açı kaybolur.
+    if (sm.act_motor_state == MOT_STATE_VEL_CONTROL) {
+        // Enkoderin 1 tam tur pulse sayısı * 10 (Örnek: 4000 pulse = 1 tur, 40000 = 10 tur)
+        // Kendi enkoder ppr değerine göre buradaki 40000 sınırını ayarlayabilirsin.
+        if (sm.encoder_position_count > 40000) {
+            sm.encoder_position_count -= 40000;
+        } else if (sm.encoder_position_count < -40000) {
+            sm.encoder_position_count += 40000;
+        }
+    }
+
 	// 5. Konumu sayacını dereceye çevir (0 = başlangıç referansı)
 	sm.act_position = (float)sm.encoder_position_count * K_ACT_POSITION;
 
 	// 6. Hızı hesapla (rpm)
+    // DİKKAT: Hız hesabı "difference" (fark) üzerinden yapıldığı için,
+    // yukarıda encoder_position_count sıfırlansa bile HIZ HESABI ASLA ETKİLENMEZ (Zıplama yapmaz)!
 	float rpm = (float)difference * K_RPM_CONVERSION;
 
 	// 7. Hız ölçümünü filtrele
-
 	// Düşük Hız: Hassas Capture verisini kullan
 	static float median_buf_rpm[5] = {0};
 

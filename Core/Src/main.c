@@ -279,11 +279,15 @@ int main(void)
 	            }
 	        }
 
-	  	  if(rx_data_ready)
-	  	  {
-	  	      Process_Binary_Packet();
-	  	      rx_data_ready = 0u;
-	  	  }
+	        // *** KRİTİK BLOK KORUMASI (Data Race Önlemi) ***
+	        if(rx_data_ready)
+	        {
+	            __disable_irq();             // Tüm kesmeleri (TIM2 dahil) kısa süreliğine DURDUR
+	            Process_Binary_Packet();     // Verileri güvenle ve bölünmeden güncelle
+	            __enable_irq();              // Kesmeleri tekrar AÇ
+
+     	      rx_data_ready = 0u;
+	        }
 
 	  	// *** MEDİKAL GÜVENLİK KİLİDİ (WATCHDOG) ***
 	  	   // Eğer motor boşta değilse VE son geçerli komuttan bu yana 1000ms (1 saniye) geçtiyse

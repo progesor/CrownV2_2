@@ -109,6 +109,7 @@ typedef struct
 
 	float osc_time_ms;          // YENİ: Zaman tabanlı mod için hareket süresi
 	float osc_timer_ms;         // YENİ: Zaman tabanlı mod sayacı
+	uint8_t last_active_mode; // YENİ: 1 = Hız(RPM), 2 = Açısal Osilasyon, 3 = Zamanlı Osilasyon
 
 
 } SharedMemory_t;

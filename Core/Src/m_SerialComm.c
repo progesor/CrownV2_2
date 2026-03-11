@@ -120,7 +120,7 @@ void ProcessBinaryPacket(void) {
   uint8_t payload_length = process_buffer[2];
   uint16_t expected_total_len = 6 + payload_length;
 
-  uint16_t calc_crc = CalculateCrc16( & process_buffer[2], 2 + payload_length);
+  uint16_t calc_crc = CalculateCrc16(&process_buffer[2], 2 + payload_length);
   uint16_t rx_crc = process_buffer[expected_total_len - 2] | (process_buffer[expected_total_len - 1] << 8);
 
   if (calc_crc != rx_crc) return;
@@ -128,117 +128,113 @@ void ProcessBinaryPacket(void) {
   sm.last_valid_comm_time = HAL_GetTick(); // WATCHDOG GÜNCELLEMESİ
 
   uint8_t cmd = process_buffer[3];
-  uint8_t * payload = & process_buffer[4];
+  uint8_t *payload = &process_buffer[4]; // Tüm veriler payload'dan okunacak
 
   switch (cmd) {
-  case 0x01:
-	  if (payload_length == 0) {
-      	// sm.last_valid_comm_time zaten yukarıda güncellendiği için
-     	// burada motor parametrelerine HİÇ DOKUNMUYORUZ!
-     	SendSerialData((uint8_t*)"<DBG: HB_OK>\n");
-	  }
-	  break;
-  case 0x10:
-    if (payload_length == 4) {
-      float target_rpm;
-      memcpy( & target_rpm, payload, 4);
-      if (sm.act_motor_state != MOT_STATE_VEL_CONTROL) InitControlVel();
-      sm.ref_velocity = target_rpm;
-      sm.act_motor_state = MOT_STATE_VEL_CONTROL;
-
-      SendSerialData((uint8_t * )
-        "<DBG: CMD_RPM_OK>\n");
-    }
-    break;
-  case 0x30: // SET PID (Kp ve Ki)
-    if (payload_length == 8) { // 2 adet float = 8 byte
-      float new_kp, new_ki;
-      memcpy( & new_kp, payload, 4);
-      memcpy( & new_ki, payload + 4, 4);
-
-      // Katsayıları canlı olarak Shared Memory'e yaz
-      sm.kp_velocity = new_kp;
-      sm.ki_velocity = new_ki;
-
-      // Parametreler değiştiği için Anti-Windup vb. resetlensin
-      InitControlVel();
-
-      SendSerialData((uint8_t * )
-        "<DBG: CMD_PID_OK>\n");
-    }
-    break;
-
-  case 0x40:
-    if (payload_length == 12) { // 3 adet float = 12 byte
-      float target_deg, max_rpm, accel_rpm_s;
-      memcpy( & target_deg, payload, 4);
-      memcpy( & max_rpm, payload + 4, 4);
-      memcpy( & accel_rpm_s, payload + 8, 4);
-
-      sm.osc_target_deg = target_deg;
-      sm.osc_max_rpm = max_rpm;
-      sm.osc_accel_rpm_s = accel_rpm_s;
-
-      // Eğer motor zaten osilasyon modundaysa baştan başlatma (sadece parametreleri canlı güncelle)
-      // Eğer farklı bir moddaysa (veya duruyorsa) osilasyonu başlat
-      if (sm.act_motor_state != MOT_STATE_POS_CONTROL) {
-        sm.act_motor_state = MOT_STATE_POS_CONTROL_INIT;
+  case 0x01: // PING
+      if (payload_length == 0) {
+          SendSerialData((uint8_t*)"<DBG: HB_OK>\n");
       }
+      break;
 
-      SendSerialData((uint8_t * )
-        "<DBG: CMD_OSC_OK>\n");
-    }
-    break;
-  case 0x50:
-        if (payload_length == 12) {
-                  float time_ms, max_rpm, accel_rpm_s;
-                  memcpy(&time_ms, payload, 4);
-                  memcpy(&max_rpm, payload + 4, 4);
-                  memcpy(&accel_rpm_s, payload + 8, 4);
+  case 0x10: // SET RPM (CONTINUOUS)
+      if (payload_length == 4) {
+          float target_rpm;
+          memcpy(&target_rpm, payload, 4);
 
-                  sm.osc_time_ms = time_ms;
-                  sm.osc_max_rpm = max_rpm;
-                  sm.osc_accel_rpm_s = accel_rpm_s;
+          sm.ref_velocity = target_rpm; // Hızı hafızaya al
+          sm.last_active_mode = 1;      // Mod 1: Sürekli (Continuous)
+          sm.act_motor_state = MOT_STATE_VEL_CONTROL_INIT; // Motoru şahlandır
 
-                  if (sm.act_motor_state != MOT_STATE_TIME_OSC_CONTROL) {
-                      sm.act_motor_state = MOT_STATE_TIME_OSC_CONTROL_INIT;
-                  }
-                  SendSerialData((uint8_t*)"<DBG: CMD_OSC_TIME_OK>\n");
-              }
-              break;
-              // *** YENİ: ARAYÜZE GÜNCEL PARAMETRELERİ OKUYUP GÖNDERME ***
-                      case 0x60: // GET PARAMS
-                          if (payload_length == 0) {
-                              char prm_msg[100];
-                              snprintf(prm_msg, sizeof(prm_msg), "<PRM,%.2f,%.2f,%.0f,%.0f,%.0f,%.0f>\n",
-                                       sm.kp_velocity, sm.ki_velocity,
-                                       sm.osc_time_ms, sm.osc_target_deg,
-                                       sm.osc_max_rpm, sm.osc_accel_rpm_s);
-                              SendSerialData((uint8_t*)prm_msg);
-                          }
-                          break;
+          SendSerialData((uint8_t*)"<DBG: CMD_RPM_OK>\n");
+      }
+      break;
 
-                      // *** YENİ: KALICI HAFIZAYA (FLASH) KAYDETME ***
-                      case 0x70: // SAVE PARAMS TO FLASH
-                          if (payload_length == 0) {
-                              // Güvenlik: Motor çalışırken Flash'a yazılmaz! (İşlemci kilitlenmesini önler)
-                              if (sm.act_motor_state == MOT_STATE_IDLE) {
-                                  SaveParamsToFlash();
-                                  SendSerialData((uint8_t*)"<DBG: PARAMS_SAVED_FLASH>\n");
-                              } else {
-                                  SendSerialData((uint8_t*)"<DBG: ERR_CANT_SAVE_WHILE_RUNNING>\n");
-                              }
-                          }
-                          break;
-  case 0x20:
-    sm.act_motor_state = MOT_STATE_IDLE;
-    sm.ref_velocity = 0.0f;
-    sm.current_traj_rpm = 0.0f;
-    InitControlVel();
-    DriveMotor(0.0f, 1u, 1u);
+  case 0x20: // STOP (ARAYÜZDEN DURDURMA)
+      if (payload_length == 0) {
+          sm.act_motor_state = MOT_STATE_IDLE;
 
-    SendSerialData((uint8_t * )
-      "<DBG: CMD_STOP_OK>\n");
-    break;
+          // DİKKAT: sm.ref_velocity = 0.0f; SATIRINI SİLDİK!
+          // Arayüzden durdursan bile pedal basıldığında eski hızı hatırlayacak.
+
+          sm.current_traj_rpm = 0.0f;
+          InitControlVel();
+          DriveMotor(0.0f, 1u, 1u);
+
+          SendSerialData((uint8_t*)"<DBG: CMD_STOP_OK>\n");
+      }
+      break;
+
+  case 0x30: // SET PID (Kp ve Ki)
+      if (payload_length == 8) {
+          float new_kp, new_ki;
+          memcpy(&new_kp, payload, 4);
+          memcpy(&new_ki, payload + 4, 4);
+
+          sm.kp_velocity = new_kp;
+          sm.ki_velocity = new_ki;
+          InitControlVel();
+
+          SendSerialData((uint8_t*)"<DBG: CMD_PID_OK>\n");
+      }
+      break;
+
+  case 0x40: // OSCILLATION (ANGLE)
+      if (payload_length == 12) {
+          float target_deg, max_rpm, accel_rpm_s;
+          memcpy(&target_deg, payload, 4);
+          memcpy(&max_rpm, payload + 4, 4);
+          memcpy(&accel_rpm_s, payload + 8, 4);
+
+          sm.osc_target_deg = target_deg;
+          sm.osc_max_rpm = max_rpm;
+          sm.osc_accel_rpm_s = accel_rpm_s;
+
+          sm.last_active_mode = 2; // Mod 2: Açısal Osilasyon
+          sm.act_motor_state = MOT_STATE_POS_CONTROL_INIT;
+
+          SendSerialData((uint8_t*)"<DBG: CMD_OSC_ANG_OK>\n");
+      }
+      break;
+
+  case 0x50: // OSCILLATION (TIME - PUNCH)
+      if (payload_length == 12) {
+          float time_ms, max_rpm, accel_rpm_s;
+          memcpy(&time_ms, payload, 4);
+          memcpy(&max_rpm, payload + 4, 4);
+          memcpy(&accel_rpm_s, payload + 8, 4);
+
+          sm.osc_time_ms = time_ms;
+          sm.osc_max_rpm = max_rpm;
+          sm.osc_accel_rpm_s = accel_rpm_s;
+
+          sm.last_active_mode = 3; // Mod 3: Zamanlı (Punch) Osilasyon
+          sm.act_motor_state = MOT_STATE_TIME_OSC_CONTROL_INIT;
+
+          SendSerialData((uint8_t*)"<DBG: CMD_OSC_TIME_OK>\n");
+      }
+      break;
+
+  case 0x60: // GET PARAMS
+      if (payload_length == 0) {
+          char prm_msg[100];
+          snprintf(prm_msg, sizeof(prm_msg), "<PRM,%.2f,%.2f,%.0f,%.0f,%.0f,%.0f>\n",
+                   sm.kp_velocity, sm.ki_velocity,
+                   sm.osc_time_ms, sm.osc_target_deg,
+                   sm.osc_max_rpm, sm.osc_accel_rpm_s);
+          SendSerialData((uint8_t*)prm_msg);
+      }
+      break;
+
+  case 0x70: // SAVE PARAMS TO FLASH
+      if (payload_length == 0) {
+          if (sm.act_motor_state == MOT_STATE_IDLE) {
+              SaveParamsToFlash();
+              SendSerialData((uint8_t*)"<DBG: PARAMS_SAVED_FLASH>\n");
+          } else {
+              SendSerialData((uint8_t*)"<DBG: ERR_CANT_SAVE_WHILE_RUNNING>\n");
+          }
+      }
+      break;
   }
 }

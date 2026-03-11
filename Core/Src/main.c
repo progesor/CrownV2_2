@@ -290,6 +290,42 @@ int main(void)
     /* USER CODE BEGIN 3 */
 	  	  uint32_t now_ms = HAL_GetTick();
 
+	  	// --- YENİ: OTONOM DONANIMSAL PEDAL KONTROLÜ (ACTIVE-LOW) ---
+	  	      static uint8_t last_pedal_state = 1; // Başlangıçta pedal çekili (1) varsayılır
+	  	      uint8_t current_pedal_state = HAL_GPIO_ReadPin(DI_Pedal_GPIO_Port, DI_Pedal_Pin);
+
+	  	      // 1. DURUM: Pedal BASILDI (1'den 0'a Düştü - Düşen Kenar)
+	  	      if (current_pedal_state == 0 && last_pedal_state == 1) {
+	  	          if (sm.act_motor_state == MOT_STATE_IDLE) {
+	  	              // Son kullanılan moda göre motoru şahlandır!
+	  	              if (sm.last_active_mode == 1) {
+	  	                  sm.act_motor_state = MOT_STATE_VEL_CONTROL_INIT;
+	  	              } else if (sm.last_active_mode == 2) {
+	  	                  sm.act_motor_state = MOT_STATE_POS_CONTROL_INIT;
+	  	              } else if (sm.last_active_mode == 3) {
+	  	                  sm.act_motor_state = MOT_STATE_TIME_OSC_CONTROL_INIT;
+	  	              }
+	  	              // Node.js backend'ine bilgi ver
+	  	              SendSerialData((uint8_t*)"<EVT:PEDAL,1>\n");
+	  	          }
+	  	      }
+	  	    // 2. DURUM: Pedal ÇEKİLDİ (0'dan 1'e Çıktı - Yükselen Kenar)
+	  	          else if (current_pedal_state == 1 && last_pedal_state == 0) {
+	  	              // Motoru acil olarak güvenli durdurma moduna al
+	  	              sm.act_motor_state = MOT_STATE_IDLE;
+
+	  	              // DİKKAT: sm.ref_velocity = 0.0f; SATIRINI SİLDİK!
+	  	              // (Tekrar basıldığında eski hızı hatırlaması için)
+
+	  	              sm.current_traj_rpm = 0.0f;
+	  	              InitControlVel();
+	  	              DriveMotor(0.0f, 1u, 1u);
+
+	  	              SendSerialData((uint8_t*)"<EVT:PEDAL,0>\n");
+	  	          }
+
+	  	      last_pedal_state = current_pedal_state; // Durumu güncelle
+
 	        // *** YENİ: KİLİTLENEN UART'I KURTARICI ***
 	        // Eğer kesme içinde başlatılamayan bir dinleme varsa, ana döngüde yeniden dene!
 	        if (rx_needs_restart)

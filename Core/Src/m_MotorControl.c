@@ -146,67 +146,71 @@ void RunOscillationTrajectory(void)
     float err_pos = target_pos - sm.act_position_relative;
     float abs_err = fabsf(err_pos);
 
-    // --- 1. SIÇRAMA KORUMASI VE DURMA ---
-    uint8_t target_reached = 0;
-    if (sm.osc_state == 0 && sm.act_position_relative >= sm.osc_target_deg) target_reached = 1;
-    if (sm.osc_state == 1 && sm.act_position_relative <= 0.0f) target_reached = 1;
+    // --- 1. OVERSHOOT (AŞIM) VE ACİL FREN MANTIĞI ---
+    // Eğer motor hedefi geçtiyse (veya tam üstündeyse) overshot = 1 olur.
+    uint8_t overshot = 0;
+    if (sm.osc_state == 0 && err_pos <= 0.0f) overshot = 1;
+    if (sm.osc_state == 1 && err_pos >= 0.0f) overshot = 1;
 
-    // Hedefi geçtik mi VEYA tolerans sınırına (1 derece) girdik mi?
-    if (target_reached || abs_err < 1.0f)
+    if (overshot)
     {
-        sm.current_traj_rpm = 0.0f;
-        VelocityControl(0.0f, sm.act_velocity, 0.0f); // Sadece fren yap
-
-        // Motor fiziksel olarak durana kadar bekle
-        if (fabsf(sm.act_velocity) < 50.0f) {
+        // Hedefi geçtik ama motor hala hızlı dönüyor olabilir.
+        // Hız 50 RPM'in altına inmeden yön değiştirirsek açı anında kayar!
+        if (fabsf(sm.act_velocity) < 50.0f)
+        {
             sm.osc_state = (sm.osc_state == 0) ? 1 : 0;
-            InitControlVel(); // PID'yi sıfırla ki sıçrama yapmasın
+            sm.current_traj_rpm = 0.0f;
+            return;
         }
-        return;
+        else
+        {
+            // Motor hızlıysa: Yönü sakın değiştirme, tam güç fren yapıp durmasını bekle!
+            sm.current_traj_rpm = 0.0f;
+            VelocityControl(0.0f, sm.act_velocity, 0.0f);
+            return;
+        }
     }
 
-    // --- 2. HİBRİT KİNEMATİK (Karekök Patlamasını Önleyen Kısım) ---
-    float a_deg_s2 = sm.osc_accel_rpm_s * 6.0f;
+    // --- 2. ZAMAN-OPTİMAL FRENLEME EĞRİSİ (Karekök) ---
+    float a_deg_s2 = sm.osc_accel_rpm_s * 6.0f; // İvmeyi Deg/s^2'ye çevir
     if (a_deg_s2 < 1.0f) a_deg_s2 = 1.0f;
 
-    //float max_allowed_rpm = 0.0f;
+    // Bu mesafede (abs_err) durabilmek için izin verilen MAKSİMUM KİNETİK HIZ
+    // Formül: v = sqrt(2 * a * x)
+    float max_kinematic_rpm = sqrtf(2.0f * a_deg_s2 * abs_err) / 6.0f;
 
-    if (abs_err > 15.0f)
+    // Hedefe çok yaklaşıldığında (< 2 derece) formül titremeye yol açar.
+    // 2 derece kala eğriyi iptal edip yumuşak (lineer) bir iniş yapıyoruz.
+    if (abs_err < 2.0f)
     {
-        // Hedefe 15 dereceden fazla varsa: KAREKÖK (Agresif ve maksimum hızlı yaklaşım)
-    	sm.max_allowed_rpm = sqrtf(2.0f * a_deg_s2 * abs_err) / 6.0f;
+        float v_2_rpm = sqrtf(2.0f * a_deg_s2 * 2.0f) / 6.0f;
+        max_kinematic_rpm = v_2_rpm * (abs_err / 2.0f);
     }
-    else
+
+    if (max_kinematic_rpm > sm.osc_max_rpm)
     {
-        // Hedefe 15 dereceden AZ kaldıysa: DOĞRUSAL (İpek gibi süzülme)
-        // 15 derecedeki hızı hesaplayıp oradan 0'a doğru çizgi çekiyoruz.
-        float v_15_rpm = sqrtf(2.0f * a_deg_s2 * 15.0f) / 6.0f;
-        sm.max_allowed_rpm = v_15_rpm * (abs_err / 15.0f);
-
-        // Motorun kilitlenmemesi için minimum bir süzülme hızı (150 RPM) veriyoruz
-        if (sm.max_allowed_rpm < 150.0f) sm.max_allowed_rpm = 150.0f;
+        max_kinematic_rpm = sm.osc_max_rpm;
     }
 
-    if (sm.max_allowed_rpm > sm.osc_max_rpm) {
-    	sm.max_allowed_rpm = sm.osc_max_rpm;
+    // --- 3. ASİMETRİK İVME YÖNETİMİ (Açı Kaçmasını Çözen Kısım) ---
+    float step_rpm = sm.osc_accel_rpm_s * CONTROL_LOOP_PERIOD;
+    float current_mag = fabsf(sm.current_traj_rpm);
+
+    // Motoru her döngüde ivme limitin kadar hızlandırmaya çalış.
+    current_mag += step_rpm;
+
+    // DİKKAT: Eğer hızlanmaya çalıştığın değer, frenleme eğrisinin (kinematik limit)
+    // üstünde kalıyorsa, hızı acımasızca eğriye EZİYORUZ.
+    // Bu sayede frenleme asla gecikmez ve hedefte milimetrik duruş sağlar.
+    if (current_mag > max_kinematic_rpm)
+    {
+        current_mag = max_kinematic_rpm;
     }
 
-    // Yön Ataması
-    float target_rpm_with_dir = sm.max_allowed_rpm;
-    if (err_pos < 0.0f) target_rpm_with_dir = -target_rpm_with_dir;
+    // Yönü tekrar hesaba kat
+    sm.current_traj_rpm = (err_pos > 0.0f) ? current_mag : -current_mag;
 
-    // --- 3. İVME SINIRLAYICI (Slew Rate) ---
-    float step_rpm = sm.osc_accel_rpm_s * CONTROL_LOOP_PERIOD; // Eğer loop 1ms ise ivme çok hassas uygulanır
-
-    if (sm.current_traj_rpm < target_rpm_with_dir) {
-        sm.current_traj_rpm += step_rpm;
-        if (sm.current_traj_rpm > target_rpm_with_dir) sm.current_traj_rpm = target_rpm_with_dir;
-    } else if (sm.current_traj_rpm > target_rpm_with_dir) {
-        sm.current_traj_rpm -= step_rpm;
-        if (sm.current_traj_rpm < target_rpm_with_dir) sm.current_traj_rpm = target_rpm_with_dir;
-    }
-
-    // Kontrolcüye Gönder
+    // --- 4. MOTORU SÜR ---
     VelocityControl(sm.current_traj_rpm, sm.act_velocity, 0.0f);
 }
 
@@ -343,50 +347,62 @@ float PositionControl(float ref_pos_deg, float act_pos_deg, float uo_vel_limit)
  */
 void VelocityControl(float ref_vel_rpm, float act_vel_rpm, float ff_vel_rpm)
 {
-	uint8_t dir = 1;
+    uint8_t dir = 1;
 
-	// 1) Yön belirleme
-	if(ref_vel_rpm < 0)
-	{
-		dir = 0;
-		ref_vel_rpm *= -1.0f;
-		act_vel_rpm *= -1.0f;
-	}
+    // 1) YÖN BELİRLEME
+    if (ref_vel_rpm < 0.0f)
+    {
+        dir = 0;
+        ref_vel_rpm = -ref_vel_rpm;
+        act_vel_rpm = -act_vel_rpm;
+    }
 
-	// 2) Normalize etme (Hızları 35000'e bölerek 0.0 ile 1.0 arasına çekiyoruz)
-	// (Eğer senin kodunda K_INV_VELOCITY makrosu varsa onu kullanabilirsin, ben garanti olması için böldüm)
-	float ref_vel_norm = ref_vel_rpm / 35000.0f;
-	float act_vel_norm = act_vel_rpm / 35000.0f;
+    // 2) NORMALIZE ETME (0.0f - 1.0f aralığı)
+    float ref_vel_norm = ref_vel_rpm / REF_VELOCITY_MAX;
+    float act_vel_norm = act_vel_rpm / REF_VELOCITY_MAX;
 
-	// 3) Hata hesaplama
-	float error = ref_vel_norm - act_vel_norm;
+    // --- 3) İLERİ BESLEME (FEED-FORWARD) ---
+    // Osilasyon modundaki ani hızlanmalara sıfır gecikme ile yanıt verir.
+    // PID'nin hata oluşturmasını beklemeden gereken tahmini taban gücü anında motora iletir.
+    float u_ff = ref_vel_norm;
 
-	// 4) P (Oransal) Kontrol
-	float up_vel = sm.kp_velocity * error;
+    // 4) HATA HESAPLAMA (Artık sadece dış bozucu etkenleri, yani senin elini hissedecek)
+    float error = ref_vel_norm - act_vel_norm;
 
-	// 5) I (İntegral) Kontrol (KRİTİK DÜZELTME: Zaman Çarpanı Eklendi!)
-	ui_vel += sm.ki_velocity * error * CONTROL_LOOP_PERIOD;
+    // 5) P (Oransal) KONTROL
+    // Titremeyi önlemek için arayüzden Kp değerini düşük tutmalısın (Örn: 0.5 ile 2.0 arası)
+    float up_vel = sm.kp_velocity * error;
 
-	// İntegratör Kırpma (Windup Koruması) PWM maks %100 olabilir
-	if(ui_vel > 1.0f) ui_vel = 1.0f;
-	if(ui_vel < -1.0f) ui_vel = -1.0f;
+    // 6) I (İntegral) KONTROL (TORK CANAVARI)
+    // Elinle tuttuğunda gücü üretecek olan kısım burası. Arayüzden Ki'yi yüksek tut (Örn: 15.0 - 40.0)
+    float ui_delta = sm.ki_velocity * error * CONTROL_LOOP_PERIOD;
+    float ui_raw = ui_vel + ui_delta;
 
-	// 6) Toplam Çıkış (PID Toplamı)
-	float uo_vel = up_vel + ui_vel;
+    // 7) HAM ÇIKIŞ TOPLAMI (FF + P + I)
+    float uo_raw = u_ff + up_vel + ui_raw;
 
-	// 7) Çıkış Sınırlandırma (PWM Duty 0.0 ile 1.0 arası olmalı)
-	if(uo_vel > 1.0f) uo_vel = 1.0f;
-	else if(uo_vel < 0.0f) uo_vel = 0.0f;
+    // 8) ÇIKIŞ SINIRLANDIRMA (Saturation)
+    float uo_sat = uo_raw;
+    if (uo_sat > VEL_UO_SAT_LIMIT_MAX) uo_sat = VEL_UO_SAT_LIMIT_MAX;
+    else if (uo_sat < VEL_UO_SAT_LIMIT_MIN) uo_sat = VEL_UO_SAT_LIMIT_MIN; // 0.0f
 
-	// Motoru sür! Brake = 1 (Fren kapalı, sürüş aktif)
-	//DriveMotor(uo_vel, dir, 1u);
+    // 9) GERÇEK ANTI-WINDUP (BCAW)
+    float k_aw = 1.0f;
+    ui_vel = ui_raw - (k_aw * (uo_raw - uo_sat));
 
-	// *** KRİTİK DÜZELTME: MOTOR TİTREŞİMİ VE ISINMAYI ÖNLEYEN FİLTRE ***
-	// 1000 Hz'de oluşan anlık matematiksel PID zıplamalarını sönümler, motora ipek gibi PWM basar.
-	uo_vel_sat0 = (K_LPF_UO_VEL * uo_vel_sat0) + ((1.0f - K_LPF_UO_VEL) * uo_vel);
+    // 10) ÇIKIŞ FİLTRESİ
+    uo_vel_sat0 = (0.2f * uo_vel_sat0) + (0.8f * uo_sat);
 
-	// Motoru sür! Filtrelenmiş uo_vel_sat0 kullanılıyor.
-	DriveMotor(uo_vel_sat0, dir, 1u);
+    // 11) MOTORU SÜRME
+    if (ref_vel_rpm < VEL_ERROR_DEADBAND && act_vel_rpm < VEL_ERROR_DEADBAND)
+    {
+        ui_vel = 0.0f; // Tam duruş anında integratörü sıfırla ki bir sonraki kalkışta zıplama yapmasın
+        DriveMotor(0.0f, 1u, 0u);
+    }
+    else
+    {
+        DriveMotor(uo_vel_sat0, dir, 1u);
+    }
 }
 
 /**

@@ -154,7 +154,7 @@ class ErtipCrownApp(ctk.CTk):
         ctk.CTkLabel(tab, text="İvme - Punch Etkisi (RPM/s):", font=ctk.CTkFont(size=14)).pack(pady=(5, 0))
         self.lbl_osc_accel = ctk.CTkLabel(tab, text="15000", font=ctk.CTkFont(size=14, weight="bold"))
         self.lbl_osc_accel.pack()
-        self.slider_osc_accel = ctk.CTkSlider(tab, from_=1000.0, to=30000.0, command=lambda v: self.lbl_osc_accel.configure(text=f"{int(v)}"))
+        self.slider_osc_accel = ctk.CTkSlider(tab, from_=1000.0, to=300000.0, command=lambda v: self.lbl_osc_accel.configure(text=f"{int(v)}"))
         self.slider_osc_accel.set(15000)
         self.slider_osc_accel.pack(pady=5, padx=20, fill="x")
 
